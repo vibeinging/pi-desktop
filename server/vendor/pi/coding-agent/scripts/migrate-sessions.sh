@@ -36,49 +36,49 @@ failed=0
 
 for file in "${files[@]}"; do
     filename=$(basename "$file")
-
+    
     # Read first line and extract cwd using jq
     if ! first_line=$(head -1 "$file" 2>/dev/null); then
         echo "SKIP: $filename - cannot read file"
         ((failed++))
         continue
     fi
-
+    
     # Parse JSON and extract cwd
     if ! cwd=$(echo "$first_line" | jq -r '.cwd // empty' 2>/dev/null); then
         echo "SKIP: $filename - invalid JSON"
         ((failed++))
         continue
     fi
-
+    
     if [[ -z "$cwd" ]]; then
         echo "SKIP: $filename - no cwd in session header"
         ((failed++))
         continue
     fi
-
+    
     # Encode cwd: remove leading slash, replace slashes with dashes, wrap with --
     encoded=$(echo "$cwd" | sed 's|^/||' | sed 's|[/:\\]|-|g')
     encoded="--${encoded}--"
-
+    
     target_dir="$AGENT_DIR/sessions/$encoded"
     target_file="$target_dir/$filename"
-
+    
     if [[ -e "$target_file" ]]; then
         echo "SKIP: $filename - target already exists"
         ((failed++))
         continue
     fi
-
+    
     echo "MIGRATE: $filename"
     echo "    cwd: $cwd"
     echo "    to:  $target_dir/"
-
+    
     if [[ "$DRY_RUN" == false ]]; then
         mkdir -p "$target_dir"
         mv "$file" "$target_file"
     fi
-
+    
     ((migrated++))
     echo
 done

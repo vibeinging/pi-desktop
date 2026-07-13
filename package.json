@@ -3,9 +3,21 @@
   "private": true,
   "version": "0.0.1",
   "productName": "PI Desktop",
-  "description": "A local-first Electron foundation for building desktop agents with pi-agent.",
+  "description": "A local-first Electron desktop foundation built on earendil-works/pi.",
   "author": "PI Desktop contributors",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vibeinging/pi-desktop.git"
+  },
+  "homepage": "https://github.com/vibeinging/pi-desktop#readme",
+  "keywords": [
+    "pi-agent",
+    "electron",
+    "desktop-agent",
+    "mcp",
+    "skills"
+  ],
   "main": "electron/main.js",
   "engines": {
     "node": ">=22.19.0",

@@ -276,7 +276,7 @@ Fired before auto-compaction or `/compact`. Can cancel or provide custom summary
 
 ```typescript
 pi.on("session_before_compact", async (event, ctx) => {
-  const { preparation, branchEntries, customInstructions, signal } = event;
+  const { preparation, branchEntries, customInstructions, reason, willRetry, signal } = event;
 
   // preparation.messagesToSummarize - messages to summarize
   // preparation.turnPrefixMessages - split turn prefix (if isSplitTurn)
@@ -287,6 +287,8 @@ pi.on("session_before_compact", async (event, ctx) => {
   // preparation.settings - compaction settings
 
   // branchEntries - all entries on current branch (for custom state)
+  // reason - "manual" (/compact), "threshold", or "overflow"
+  // willRetry - whether the aborted turn is retried after compaction (overflow recovery)
   // signal - AbortSignal (pass to LLM calls)
 
   // Cancel:
@@ -313,7 +315,7 @@ import { convertToLlm, serializeConversation } from "@earendil-works/pi-coding-a
 
 pi.on("session_before_compact", async (event, ctx) => {
   const { preparation } = event;
-
+  
   // Convert AgentMessage[] to Message[], then serialize to text
   const conversationText = serializeConversation(
     convertToLlm(preparation.messagesToSummarize)
@@ -327,7 +329,7 @@ pi.on("session_before_compact", async (event, ctx) => {
 
   // Now send to your model for summarization
   const summary = await myModel.summarize(conversationText);
-
+  
   return {
     compaction: {
       summary,

@@ -11,6 +11,8 @@ npm run dev
 
 依赖分别由 `server/package-lock.json`、`renderer/package-lock.json` 和 `electron/package-lock.json` 固定。修改依赖后要提交对应 lockfile。
 
+仓库提供 `.nvmrc` 和 `.node-version`。切换 Node 主版本后要重新运行 `npm run setup`，避免 `better-sqlite3` 原生文件与当前 Node ABI 不一致。
+
 ## 开发原则
 
 - 通用底座不引入具体行业业务。
@@ -21,6 +23,10 @@ npm run dev
 - 不在提交信息中加入工具或 AI 模型署名。
 
 推荐分支前缀：`feature/`、`fix/`、`docs/`、`chore/`、`refactor/`。
+
+## 贡献许可证
+
+除单独说明的第三方内容外，本项目采用 [MIT License](LICENSE)。提交贡献表示你有权提供这些内容，并同意按 MIT 许可证分发。
 
 ## 提交前检查
 
@@ -39,7 +45,7 @@ npm run check
 
 ## 修改 vendored pi
 
-不要直接覆盖 `server/vendor/pi/`。先阅读 [server/vendor/README.md](server/vendor/README.md)，记录上游 tag、commit、本地修改和许可证变化。`server/vendor/pi/**/dist/` 是可再生文件，不进入 Git。
+不要直接覆盖 `server/vendor/pi/`。先阅读 [server/vendor/README.md](server/vendor/README.md)，并对照 [earendil-works/pi](https://github.com/earendil-works/pi) 记录上游 tag、commit、本地修改和许可证变化。`server/vendor/pi/**/dist/` 是可再生文件，不进入 Git。
 
 ## 安全相关修改
 

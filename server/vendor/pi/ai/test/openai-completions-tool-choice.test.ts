@@ -1,9 +1,8 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getModel } from "../src/models.ts";
-import { convertMessages } from "../src/providers/openai-completions.ts";
-import { stream, streamSimple } from "../src/stream.ts";
-import type { AssistantMessage, Model, Tool, ToolResultMessage } from "../src/types.ts";
+import { convertMessages } from "../src/api/openai-completions.ts";
+import { getModel, stream, streamSimple } from "../src/compat.ts";
+import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
 	lastParams: undefined as unknown,
@@ -14,8 +13,23 @@ const mockState = vi.hoisted(() => ({
 				usage?: {
 					prompt_tokens: number;
 					completion_tokens: number;
-					prompt_tokens_details: { cached_tokens: number; cache_write_tokens?: number };
-					completion_tokens_details: { reasoning_tokens: number };
+					prompt_cache_hit_tokens?: number;
+					cache_input_tokens?: number;
+					cached_tokens?: number;
+					cache_read_input_tokens?: number;
+					cache_write_tokens?: number;
+					cache_creation_input_tokens?: number;
+					prompt_tokens_details?: {
+						cached_tokens?: number;
+						cache_write_tokens?: number;
+						cache_creation_input_tokens?: number;
+						cache_creation?: {
+							ephemeral_5m_input_tokens?: number;
+							ephemeral_1h_input_tokens?: number;
+							cache_creation_input_tokens?: number;
+						};
+					};
+					completion_tokens_details?: { reasoning_tokens?: number };
 				};
 		  }>
 		| undefined,
@@ -63,6 +77,46 @@ vi.mock("openai", () => {
 
 	return { default: FakeOpenAI };
 });
+
+const localOpenAICompletionsModel = {
+	api: "openai-completions",
+	provider: "local-vllm",
+	baseUrl: "http://localhost:8000/v1",
+	reasoning: true,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 128000,
+	maxTokens: 8192,
+} satisfies Omit<Model<"openai-completions">, "id" | "name" | "compat">;
+
+type CapturedParams = {
+	chat_template_kwargs?: Record<string, unknown>;
+	thinking?: unknown;
+	reasoning_effort?: string;
+};
+
+async function captureSimpleParams(
+	model: Model<"openai-completions">,
+	reasoning?: SimpleStreamOptions["reasoning"],
+): Promise<CapturedParams> {
+	let payload: unknown;
+
+	await streamSimple(
+		model,
+		{
+			messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+		},
+		{
+			apiKey: "test",
+			reasoning,
+			onPayload: (params: unknown) => {
+				payload = params;
+			},
+		},
+	).result();
+
+	return (payload ?? mockState.lastParams) as CapturedParams;
+}
 
 describe("openai-completions tool_choice", () => {
 	beforeEach(() => {
@@ -266,7 +320,7 @@ describe("openai-completions tool_choice", () => {
 				low: "high",
 				medium: "high",
 				high: "high",
-				xhigh: "max",
+				max: "max",
 			});
 		}
 	});
@@ -277,7 +331,7 @@ describe("openai-completions tool_choice", () => {
 			{ reasoning: "low", effort: "high" },
 			{ reasoning: "medium", effort: "high" },
 			{ reasoning: "high", effort: "high" },
-			{ reasoning: "xhigh", effort: "max" },
+			{ reasoning: "max", effort: "max" },
 		] as const;
 
 		for (const testCase of cases) {
@@ -304,9 +358,69 @@ describe("openai-completions tool_choice", () => {
 			).result();
 
 			const params = (payload ?? mockState.lastParams) as { thinking?: unknown; reasoning_effort?: string };
-			expect(params.thinking).toEqual({ type: "enabled" });
+			expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
 			expect(params.reasoning_effort).toBe(testCase.effort);
 		}
+	});
+
+	it("preserves z.ai thinking when replaying reasoning_content", async () => {
+		const model = getModel("zai", "glm-5.2")!;
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			api: "openai-completions",
+			provider: "zai",
+			model: "glm-5.2",
+			content: [
+				{ type: "thinking", thinking: "prior reasoning", thinkingSignature: "reasoning_content" },
+				{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } },
+			],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: Date.now(),
+		};
+		const toolResult: ToolResultMessage = {
+			role: "toolResult",
+			toolCallId: "call_1",
+			toolName: "read",
+			content: [{ type: "text", text: "contents" }],
+			isError: false,
+			timestamp: Date.now(),
+		};
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{ role: "user", content: "Read README.md", timestamp: Date.now() },
+					assistantMessage,
+					toolResult,
+					{ role: "user", content: "Continue", timestamp: Date.now() },
+				],
+			},
+			{
+				apiKey: "test",
+				reasoning: "high",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			messages?: Array<Record<string, unknown>>;
+			thinking?: unknown;
+		};
+		const replayedAssistant = params.messages?.find((message) => message.role === "assistant");
+		expect(replayedAssistant).toMatchObject({ reasoning_content: "prior reasoning" });
+		expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
 	});
 
 	it("omits z.ai GLM-5.2 reasoning_effort when thinking is off", async () => {
@@ -970,6 +1084,8 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("stores OpenRouter Kimi K2.6 reasoning replay compat in built-in metadata", () => {
+		// `:free` variant delisted from the OpenRouter API; the generator override
+		// matches any `moonshotai/kimi-k2.6*` variant that is listed.
 		const model = getModel("openrouter", "moonshotai/kimi-k2.6")!;
 		expect(model.compat?.supportsDeveloperRole).toBe(false);
 		expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
@@ -1142,6 +1258,7 @@ describe("openai-completions tool_choice", () => {
 				thinkingFormat: "openai",
 				openRouterRouting: {},
 				vercelGatewayRouting: {},
+				chatTemplateKwargs: {},
 				zaiToolStream: false,
 				supportsStrictMode: true,
 				sendSessionAffinityHeaders: false,
@@ -1327,6 +1444,7 @@ describe("openai-completions tool_choice", () => {
 
 		expect(response.usage.input).toBe(10);
 		expect(response.usage.output).toBe(33);
+		expect(response.usage.reasoning).toBe(21);
 		expect(response.usage.totalTokens).toBe(43);
 	});
 
@@ -1368,86 +1486,6 @@ describe("openai-completions tool_choice", () => {
 		expect(response.usage.input).toBe(20);
 		expect(response.usage.cacheRead).toBe(50);
 		expect(response.usage.cacheWrite).toBe(30);
-		expect(response.usage.totalTokens).toBe(105);
-	});
-
-	it("uses positive compatibility cache fields when standard fields are zero", async () => {
-		mockState.chunks = [
-			{
-				id: "chatcmpl-cache-compat",
-				choices: [{ delta: { content: "OK" }, finish_reason: null }],
-			},
-			{
-				id: "chatcmpl-cache-compat",
-				choices: [{ delta: {}, finish_reason: "stop" }],
-				usage: {
-					prompt_tokens: 100,
-					completion_tokens: 5,
-					prompt_cache_hit_tokens: 50,
-					cache_creation_input_tokens: 30,
-					prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-				},
-			},
-		];
-
-		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
-		const model = { ...baseModel, api: "openai-completions" } as const;
-		const response = await streamSimple(
-			model,
-			{
-				messages: [
-					{
-						role: "user",
-						content: "Reply with exactly OK",
-						timestamp: Date.now(),
-					},
-				],
-			},
-			{ apiKey: "test" },
-		).result();
-
-		expect(response.usage.input).toBe(20);
-		expect(response.usage.cacheRead).toBe(50);
-		expect(response.usage.cacheWrite).toBe(30);
-		expect(response.usage.totalTokens).toBe(105);
-	});
-
-	it("accepts legacy top-level cache_input_tokens", async () => {
-		mockState.chunks = [
-			{
-				id: "chatcmpl-cache-input",
-				choices: [{ delta: { content: "OK" }, finish_reason: null }],
-			},
-			{
-				id: "chatcmpl-cache-input",
-				choices: [{ delta: {}, finish_reason: "stop" }],
-				usage: {
-					prompt_tokens: 100,
-					completion_tokens: 5,
-					cache_input_tokens: 80,
-				},
-			},
-		];
-
-		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
-		const model = { ...baseModel, api: "openai-completions" } as const;
-		const response = await streamSimple(
-			model,
-			{
-				messages: [
-					{
-						role: "user",
-						content: "Reply with exactly OK",
-						timestamp: Date.now(),
-					},
-				],
-			},
-			{ apiKey: "test" },
-		).result();
-
-		expect(response.usage.input).toBe(20);
-		expect(response.usage.cacheRead).toBe(80);
-		expect(response.usage.cacheWrite).toBe(0);
 		expect(response.usage.totalTokens).toBe(105);
 	});
 
@@ -1497,6 +1535,89 @@ describe("openai-completions tool_choice", () => {
 		expect(response.usage.totalTokens).toBe(105);
 	});
 
+	it("uses positive compatibility cache fields when standard fields are zero", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-cache-compat",
+				choices: [{ delta: { content: "OK" }, finish_reason: null }],
+			},
+			{
+				id: "chatcmpl-cache-compat",
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 100,
+					completion_tokens: 5,
+					prompt_cache_hit_tokens: 50,
+					cache_creation_input_tokens: 30,
+					prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+					completion_tokens_details: { reasoning_tokens: 2 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Reply with exactly OK",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.input).toBe(20);
+		expect(response.usage.cacheRead).toBe(50);
+		expect(response.usage.cacheWrite).toBe(30);
+		expect(response.usage.reasoning).toBe(2);
+		expect(response.usage.totalTokens).toBe(105);
+	});
+
+	it("accepts legacy top-level cache_input_tokens", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-cache-input",
+				choices: [{ delta: { content: "OK" }, finish_reason: null }],
+			},
+			{
+				id: "chatcmpl-cache-input",
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 100,
+					completion_tokens: 5,
+					cache_input_tokens: 80,
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Reply with exactly OK",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.input).toBe(20);
+		expect(response.usage.cacheRead).toBe(80);
+		expect(response.usage.cacheWrite).toBe(0);
+		expect(response.usage.reasoning).toBe(0);
+		expect(response.usage.totalTokens).toBe(105);
+	});
+
 	it("uses OpenRouter reasoning object instead of reasoning_effort", async () => {
 		const model = getModel("openrouter", "deepseek/deepseek-r1")!;
 		let payload: unknown;
@@ -1526,6 +1647,77 @@ describe("openai-completions tool_choice", () => {
 			reasoning_effort?: string;
 		};
 		expect(params.reasoning).toEqual({ effort: "high" });
+		expect(params.reasoning_effort).toBeUndefined();
+	});
+
+	it("uses configurable chat template boolean thinking kwargs", async () => {
+		const model = {
+			...localOpenAICompletionsModel,
+			id: "deepseek-ai/DeepSeek-V3.1",
+			name: "DeepSeek V3.1 via vLLM",
+			compat: {
+				thinkingFormat: "chat-template",
+				supportsReasoningEffort: false,
+				chatTemplateKwargs: { thinking: { $var: "thinking.enabled" } },
+			},
+		} satisfies Model<"openai-completions">;
+
+		for (const testCase of [
+			{ reasoning: "high" as const, expected: true },
+			{ reasoning: undefined, expected: false },
+		]) {
+			const params = await captureSimpleParams(model, testCase.reasoning);
+
+			expect(params.chat_template_kwargs).toEqual({ thinking: testCase.expected });
+			expect(params.thinking).toBeUndefined();
+			expect(params.reasoning_effort).toBeUndefined();
+		}
+	});
+
+	it("uses qwen chat template thinking kwargs", async () => {
+		const model = {
+			...localOpenAICompletionsModel,
+			id: "Qwen/Qwen3-Coder",
+			name: "Qwen3 Coder via vLLM",
+			compat: {
+				thinkingFormat: "qwen-chat-template",
+				supportsReasoningEffort: false,
+			},
+		} satisfies Model<"openai-completions">;
+
+		for (const testCase of [
+			{ reasoning: "high" as const, expected: true },
+			{ reasoning: undefined, expected: false },
+		]) {
+			const params = await captureSimpleParams(model, testCase.reasoning);
+
+			expect(params.chat_template_kwargs).toEqual({
+				enable_thinking: testCase.expected,
+				preserve_thinking: true,
+			});
+			expect(params.reasoning_effort).toBeUndefined();
+		}
+	});
+
+	it("uses configurable chat template effort kwargs with static kwargs", async () => {
+		const model = {
+			...localOpenAICompletionsModel,
+			id: "unsloth/gpt-oss-120b-GGUF",
+			name: "GPT OSS via vLLM",
+			thinkingLevelMap: { xhigh: "max" },
+			compat: {
+				thinkingFormat: "chat-template",
+				supportsReasoningEffort: false,
+				chatTemplateKwargs: {
+					preserve_thinking: true,
+					reasoning_effort: { $var: "thinking.effort", omitWhenOff: true },
+				},
+			},
+		} satisfies Model<"openai-completions">;
+
+		const params = await captureSimpleParams(model, "xhigh");
+
+		expect(params.chat_template_kwargs).toEqual({ preserve_thinking: true, reasoning_effort: "max" });
 		expect(params.reasoning_effort).toBeUndefined();
 	});
 

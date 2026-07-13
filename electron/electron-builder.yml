@@ -1,4 +1,4 @@
-appId: works.earendil.pi-desktop
+appId: io.github.vibeinging.pi-desktop
 productName: PI Desktop
 electronVersion: 42.4.1
 asar: true
@@ -17,6 +17,12 @@ files:
   - renderer/dist/**/*
 
 extraResources:
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
+  - from: third_party/licenses
+    to: third_party/licenses
   - from: staging/server
     to: server
     filter:
