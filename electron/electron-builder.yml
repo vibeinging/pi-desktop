@@ -1,0 +1,31 @@
+appId: works.earendil.pi-desktop
+productName: PI Desktop
+electronVersion: 42.4.1
+asar: true
+npmRebuild: false
+afterPack: electron/after-pack.cjs
+
+directories:
+  output: release
+  buildResources: electron/icons
+
+files:
+  - package.json
+  - electron/main.js
+  - electron/preload.js
+  - electron/icons/**/*
+  - renderer/dist/**/*
+
+extraResources:
+  - from: staging/server
+    to: server
+    filter:
+      - "**/*"
+
+mac:
+  category: public.app-category.developer-tools
+  icon: electron/icons/icon.icns
+  identity: null
+  target: dir
+
+artifactName: "${productName}-${version}-${os}-${arch}.${ext}"

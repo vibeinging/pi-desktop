@@ -1,0 +1,24 @@
+{
+  "name": "pi-desktop-electron",
+  "productName": "PI Desktop",
+  "version": "0.1.0",
+  "description": "PI Desktop 桌面壳，基于 Electron 承载 React 渲染层与本地 Node 后端",
+  "author": "PI Desktop contributors",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "engines": {
+    "node": ">=22.19.0",
+    "npm": ">=11.0.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "rebuild:help": "electron-rebuild --help"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "electron-builder": "^26.15.3",
+    "electron": "^42.4.1"
+  }
+}

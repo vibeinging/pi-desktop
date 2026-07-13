@@ -1,0 +1,30 @@
+{
+  "name": "pi-desktop",
+  "private": true,
+  "version": "0.0.1",
+  "productName": "PI Desktop",
+  "description": "A local-first Electron foundation for building desktop agents with pi-agent.",
+  "author": "PI Desktop contributors",
+  "license": "UNLICENSED",
+  "main": "electron/main.js",
+  "engines": {
+    "node": ">=22.19.0",
+    "npm": ">=11.0.0"
+  },
+  "packageManager": "npm@11.16.0",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "predev": "npm --prefix server run ensure:pi",
+    "dev": "node scripts/dev.mjs",
+    "dev:renderer": "npm --prefix renderer run dev -- --host 127.0.0.1",
+    "dev:electron": "npm --prefix electron run dev",
+    "lint": "npm --prefix renderer run lint",
+    "typecheck": "npm --prefix renderer run typecheck",
+    "test": "npm --prefix server test && npm --prefix renderer test",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "build": "npm run build:server-pi && npm run build:renderer",
+    "build:renderer": "npm --prefix renderer run build:desktop",
+    "build:server-pi": "npm --prefix server run build:pi",
+    "package:dir": "node scripts/package.mjs --dir"
+  }
+}

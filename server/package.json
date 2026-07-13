@@ -1,0 +1,41 @@
+{
+  "name": "@pi-desktop/server",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "PI Desktop 的通用本地后端与传输层。",
+  "author": "PI Desktop contributors",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.19.0",
+    "npm": ">=11.0.0"
+  },
+  "workspaces": [
+    "vendor/pi/tui",
+    "vendor/pi/ai",
+    "vendor/pi/agent",
+    "vendor/pi/coding-agent"
+  ],
+  "scripts": {
+    "prestart": "npm run ensure:pi",
+    "start": "node src/index.js",
+    "predev": "npm run ensure:pi",
+    "dev": "node src/index.js",
+    "pretest": "npm run ensure:pi",
+    "test": "node --test test/*.test.mjs",
+    "ensure:pi": "node scripts/ensure_pi_build.mjs",
+    "build:pi": "node scripts/build_pi.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "file:vendor/pi/agent",
+    "@earendil-works/pi-ai": "file:vendor/pi/ai",
+    "@earendil-works/pi-coding-agent": "file:vendor/pi/coding-agent",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.11.1",
+    "express": "^4.21.2",
+    "undici": "^7.0.0"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260120.1"
+  }
+}
