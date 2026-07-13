@@ -2,11 +2,13 @@
 
 本文记录仓库中直接保存源码或二进制文件的主要第三方项目。npm 间接依赖的完整清单以各目录的 `package-lock.json` 为准。
 
+由 PI Desktop contributors 持有版权的内容使用根目录的 [MIT License](LICENSE)。第三方内容继续保留各自的版权和许可证。项目基于 [earendil-works/pi](https://github.com/earendil-works/pi) 构建，但不是其官方桌面客户端。
+
 ## pi
 
-- 项目：https://github.com/earendil-works/pi
-- 版本：`v0.79.6`
-- Commit：`31bfb2f16f7a1dd707876e970f0f80caa61f8435`
+- 上游项目：https://github.com/earendil-works/pi
+- 版本：`v0.80.6`
+- Commit：`2b3fda9921b5590f285165287bd442a25817f17b`
 - 作者：Mario Zechner 及贡献者
 - 许可证：MIT
 - 本地位置：`server/vendor/pi/{tui,ai,agent,coding-agent}`
@@ -14,11 +16,21 @@
 
 本仓库相对该 tag 的有意义修改：
 
-1. `ai/src/providers/openai-completions.ts` 增加 OpenAI 兼容接口、DashScope 等返回格式中的缓存读写 token 解析，并增加对应测试。
-2. `coding-agent/package.json` 将其直接依赖 `undici` 从 `8.3.0` 调整为 `8.7.0`。
-3. 各包 changelog 增加 `Unreleased` 标题；部分文档和脚本仅清理行尾空格，不改变行为。
+1. `ai/src/api/openai-completions.ts` 增加 OpenAI compatible、DashScope 等返回格式中的缓存读写 token 解析，并增加对应测试；上游新增的 reasoning token 统计保持不变。
+2. `coding-agent/package.json` 将其直接依赖 `undici` 从上游 `8.5.0` 调整为 `8.7.0`，对应 shrinkwrap 同步更新。
 
 构建所需的上游根 `tsconfig.base.json` 复制到 `server/vendor/tsconfig.base.json`。详细更新方法见 `server/vendor/README.md`。
+
+## vue-element-admin 资源
+
+- 上游项目：https://github.com/PanJiaChen/vue-element-admin
+- 核对 Commit：`6858a9ad67483025f6a9432a926beb9327037be3`
+- 版权：Copyright (c) 2017-present PanJiaChen
+- 许可证：MIT
+- 本地位置：`renderer/src/assets/401_images/`、`renderer/src/assets/404_images/`，以及 `renderer/src/icons/common/`、`renderer/src/icons/nav-bar/` 中从上游复制或改名的 SVG
+- 许可证副本：`third_party/licenses/vue-element-admin-MIT.txt`
+
+这些资源用于通用错误页和界面图标。即使文件经过改名，分发时也必须保留上游版权声明和 MIT 许可证。
 
 ## doomgeneric / DOOM 示例（已排除）
 

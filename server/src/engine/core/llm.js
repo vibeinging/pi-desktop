@@ -54,6 +54,7 @@ export class TokenUsage {
   constructor({
     prompt_tokens = 0,
     completion_tokens = 0,
+    reasoning_tokens = 0,
     total_tokens = 0,
     cached_tokens = 0,
     cache_write_tokens = 0,
@@ -61,6 +62,7 @@ export class TokenUsage {
   } = {}) {
     this.prompt_tokens = prompt_tokens;
     this.completion_tokens = completion_tokens;
+    this.reasoning_tokens = reasoning_tokens;
     this.total_tokens = total_tokens;
     this.cached_tokens = cached_tokens;
     this.cache_write_tokens = cache_write_tokens;
@@ -71,6 +73,7 @@ export class TokenUsage {
   add(other) {
     this.prompt_tokens += other.prompt_tokens || 0;
     this.completion_tokens += other.completion_tokens || 0;
+    this.reasoning_tokens += other.reasoning_tokens || 0;
     this.total_tokens += other.total_tokens || 0;
     this.cached_tokens += other.cached_tokens || 0;
     this.cache_write_tokens += other.cache_write_tokens || 0;
@@ -80,6 +83,7 @@ export class TokenUsage {
   get isEmpty() {
     return (
       this.total_tokens === 0 &&
+      this.reasoning_tokens === 0 &&
       this.cached_tokens === 0 &&
       this.cache_write_tokens === 0 &&
       this.cost_usd === 0
@@ -90,6 +94,7 @@ export class TokenUsage {
     return {
       prompt_tokens: this.prompt_tokens,
       completion_tokens: this.completion_tokens,
+      reasoning_tokens: this.reasoning_tokens,
       total_tokens: this.total_tokens,
       cached_tokens: this.cached_tokens,
       cache_write_tokens: this.cache_write_tokens,
@@ -98,7 +103,7 @@ export class TokenUsage {
   }
 
   toString() {
-    return `TokenUsage(prompt=${this.prompt_tokens}, completion=${this.completion_tokens}, total=${this.total_tokens}, cached=${this.cached_tokens}, cache_write=${this.cache_write_tokens})`;
+    return `TokenUsage(prompt=${this.prompt_tokens}, completion=${this.completion_tokens}, reasoning=${this.reasoning_tokens}, total=${this.total_tokens}, cached=${this.cached_tokens}, cache_write=${this.cache_write_tokens})`;
   }
 }
 
@@ -153,7 +158,8 @@ export function recordUsage(usage, modelName = '', callSite = null) {
   console.info(
     `[TOKEN] model=${modelName} call_site=${cs} | ` +
     `prompt=${usage.prompt_tokens} completion=${usage.completion_tokens} ` +
-    `total=${usage.total_tokens} cached=${usage.cached_tokens} cache_write=${usage.cache_write_tokens || 0}`
+    `reasoning=${usage.reasoning_tokens || 0} total=${usage.total_tokens} ` +
+    `cached=${usage.cached_tokens} cache_write=${usage.cache_write_tokens || 0}`
   );
   const tracker = _trackerStorage.getStore();
   if (tracker) {

@@ -4,7 +4,7 @@
   "private": true,
   "description": "PI Desktop 的 React 渲染层。",
   "author": "PI Desktop contributors",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.19.0",

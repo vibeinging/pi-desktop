@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "PI Desktop 桌面壳，基于 Electron 承载 React 渲染层与本地 Node 后端",
   "author": "PI Desktop contributors",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "main": "main.js",
   "engines": {

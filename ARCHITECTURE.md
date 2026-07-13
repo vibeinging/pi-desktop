@@ -58,7 +58,7 @@ eval / CI / browser debugging
 
 ### Vendored pi
 
-`server/vendor/pi/` 固定 pi v0.79.6 的四个包，构建产物不入 Git。`server/scripts/ensure_pi_build.mjs` 根据源码和配置时间判断是否需要重建。来源、修改和更新步骤见 [server/vendor/README.md](server/vendor/README.md)。
+`server/vendor/pi/` 固定 [earendil-works/pi](https://github.com/earendil-works/pi) v0.80.6 的四个包，构建产物不入 Git。`server/scripts/ensure_pi_build.mjs` 根据源码和配置时间判断是否需要重建。PI Desktop 是独立项目；来源、修改、许可证和更新步骤见 [server/vendor/README.md](server/vendor/README.md)。
 
 ## Electron 打包布局
 
@@ -66,6 +66,9 @@ eval / CI / browser debugging
 
 ```text
 PI Desktop.app/Contents/Resources/
+├── LICENSE
+├── THIRD_PARTY_NOTICES.md
+├── third_party/licenses/
 ├── app.asar
 │   ├── electron/main.js + preload.js
 │   └── renderer/dist/

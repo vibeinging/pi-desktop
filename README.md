@@ -1,13 +1,21 @@
 # PI Desktop
 
 [![CI](https://github.com/vibeinging/pi-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/vibeinging/pi-desktop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Upstream: earendil-works/pi](https://img.shields.io/badge/upstream-earendil--works%2Fpi-24292f?logo=github)](https://github.com/earendil-works/pi)
 
-一个基于 `pi-agent` 的本地桌面 Agent 底座。
+一个基于 [earendil-works/pi](https://github.com/earendil-works/pi) 的本地桌面 Agent 底座。
 
 PI Desktop 把 Electron、React、本地 Node.js 后端、SQLite、模型配置、Skills、MCP 和本地工具放在同一个仓库里。你可以直接在它上面开发自己的桌面 Agent，不必从窗口管理、进程通信、会话保存和工具调用重新搭建。
 
 > [!IMPORTANT]
-> 当前是开发者预览版。核心开发和 macOS arm64 打包链路已经可用，但还没有正式安装包、代码签名和自动升级。根许可证尚未选定；在 `LICENSE` 落地前，公开源码不等于已经完成开源授权。
+> PI Desktop 是独立的社区项目，不是 `earendil-works/pi` 的官方桌面客户端。当前仍是开发者预览版：核心开发和 macOS arm64 打包链路已经可用，但还没有正式安装包、代码签名和自动升级。
+
+## 与 pi 的关系
+
+[pi](https://github.com/earendil-works/pi) 提供统一模型接口、Agent runtime、coding-agent 和工具调用基础。PI Desktop 在这些能力之上增加 Electron 桌面壳、React 界面、本地 SQLite 持久化、IPC、安全边界和桌面打包流程。
+
+仓库固定使用 pi `v0.80.6`，来源 commit、本地修改和更新方法记录在 [Vendored pi 说明](server/vendor/README.md) 与 [第三方代码说明](THIRD_PARTY_NOTICES.md) 中。升级 pi 时会继续保留上游版权和 MIT 许可证。
 
 ## 已有能力
 
@@ -61,6 +69,8 @@ npm run dev
 ```
 
 `npm run setup` 会分别安装 Server、Renderer 和 Electron 的锁定依赖，并构建缺失的 pi 运行文件。根目录不需要执行 `npm install`。
+
+建议使用仓库 `.nvmrc` 或 `.node-version` 指定的 Node.js 版本。切换 Node 主版本后请重新运行 `npm run setup`，避免复用不兼容的 `better-sqlite3` 原生文件。
 
 应用启动后：
 
@@ -185,9 +195,10 @@ docs/           面向开发者的公开发布记录
 - [架构与扩展点](ARCHITECTURE.md)
 - [参与开发](CONTRIBUTING.md)
 - [安全说明](SECURITY.md)
+- [MIT 许可证](LICENSE)
 - [第三方代码说明](THIRD_PARTY_NOTICES.md)
 - [公开发布检查](docs/reports/2026-07-13_public-release-check.md)
 
-## 许可证状态
+## 许可证
 
-根许可证尚未确定，当前 package 标记为 `UNLICENSED`。在根 `LICENSE` 和仓库代码、界面及素材权属确认完成前，请不要把本仓库描述为已经完成开源授权的软件。Vendored pi 和其他第三方代码继续受各自许可证约束，详情见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+除单独说明的第三方内容外，PI Desktop 采用 [MIT License](LICENSE)。Vendored pi 也使用 MIT 许可证，但继续保留上游作者的版权和许可证副本；其他第三方内容见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

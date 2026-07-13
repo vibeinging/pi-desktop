@@ -1,4 +1,4 @@
-import { registerBuiltInApiProviders, streamSimple } from "@earendil-works/pi-ai";
+import { registerBuiltInApiProviders, streamSimple } from "@earendil-works/pi-ai/compat";
 import { normalizeTokenUsage } from "../core/token_usage.js";
 
 export const DEFAULT_CONTEXT_WINDOW = 128000;
@@ -33,7 +33,13 @@ export function positiveInt(value, fallback = undefined) {
 export function normalizePiUsageForTrace(usage) {
   const normalized = normalizeTokenUsage(usage);
   if (!normalized) return null;
-  if (!normalized.total_tokens && !normalized.cached_tokens && !normalized.cache_write_tokens && !normalized.cost_usd) return null;
+  if (
+    !normalized.total_tokens
+    && !normalized.reasoning_tokens
+    && !normalized.cached_tokens
+    && !normalized.cache_write_tokens
+    && !normalized.cost_usd
+  ) return null;
   return normalized;
 }
 

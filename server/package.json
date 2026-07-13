@@ -5,7 +5,7 @@
   "type": "module",
   "description": "PI Desktop 的通用本地后端与传输层。",
   "author": "PI Desktop contributors",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "node": ">=22.19.0",
     "npm": ">=11.0.0"

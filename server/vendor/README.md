@@ -5,8 +5,8 @@ PI Desktop 保存 pi 源码，是为了让桌面运行时可固定版本、可�
 ## 当前来源
 
 - 上游：https://github.com/earendil-works/pi
-- Tag：`v0.79.6`
-- Commit：`31bfb2f16f7a1dd707876e970f0f80caa61f8435`
+- Tag：`v0.80.6`
+- Commit：`2b3fda9921b5590f285165287bd442a25817f17b`
 - 包：`tui`、`ai`、`agent`、`coding-agent`
 - 许可证：MIT，副本位于 `server/vendor/licenses/pi-MIT.txt`
 
@@ -16,10 +16,10 @@ PI Desktop 保存 pi 源码，是为了让桌面运行时可固定版本、可�
 
 语义修改只有两组：
 
-1. `pi/ai` 的 OpenAI completions provider 扩展缓存读写 token 兼容字段，并增加测试。
-2. `pi/coding-agent/package.json` 的 `undici` 版本从 `8.3.0` 调整为 `8.7.0`。
+1. `pi/ai/src/api/openai-completions.ts` 扩展 OpenAI compatible、DashScope 等接口的缓存读写 token 兼容字段，并增加测试。补丁保留上游的 reasoning token 统计。
+2. `pi/coding-agent/package.json` 的 `undici` 版本从上游 `8.5.0` 调整为 `8.7.0`，对应 `npm-shrinkwrap.json` 同步更新。
 
-此外还有 `Unreleased` changelog 标题和少量行尾空格清理。完整说明见根目录 `THIRD_PARTY_NOTICES.md`。
+完整说明见根目录 `THIRD_PARTY_NOTICES.md`。
 
 ## 更新步骤
 
@@ -35,9 +35,9 @@ PI Desktop 保存 pi 源码，是为了让桌面运行时可固定版本、可�
 
 3. 复制 `packages/{tui,ai,agent,coding-agent}` 和根 `tsconfig.base.json`，排除 `.git`、`node_modules` 和 `dist`。
 
-4. 重新应用并复查本地语义修改。不要只按文件整体覆盖，否则会静默丢失 provider 兼容逻辑。
+4. 重新应用并复查本地语义修改。缓存补丁位于 `ai/src/api/openai-completions.ts`；不要只按文件整体覆盖，否则会静默丢失 provider 兼容逻辑或上游新增的 reasoning 统计。
 
-5. 更新本文件、`THIRD_PARTY_NOTICES.md`、pi MIT 许可证副本和 server lockfile。
+5. 更新本文件、`THIRD_PARTY_NOTICES.md`、pi MIT 许可证副本、server lockfile 和 coding-agent shrinkwrap。
 
 6. 比较源码：
 

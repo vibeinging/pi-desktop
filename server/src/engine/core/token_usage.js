@@ -40,6 +40,8 @@ export function normalizeTokenUsage(usage) {
 
   const promptDetails = objectFrom(usage.prompt_tokens_details) || {};
   const inputDetails = objectFrom(usage.input_tokens_details) || {};
+  const completionDetails = objectFrom(usage.completion_tokens_details) || {};
+  const outputDetails = objectFrom(usage.output_tokens_details) || {};
   const promptCacheCreation = objectFrom(promptDetails.cache_creation);
   const inputCacheCreation = objectFrom(inputDetails.cache_creation);
   const topLevelCacheCreation = objectFrom(usage.cache_creation);
@@ -114,6 +116,13 @@ export function normalizeTokenUsage(usage) {
     usage.candidatesTokenCount,
     usage.output,
   );
+  const reasoningTokens = positiveNumber(
+    usage.reasoning,
+    usage.reasoning_tokens,
+    usage.reasoningTokens,
+    completionDetails.reasoning_tokens,
+    outputDetails.reasoning_tokens,
+  );
   const totalTokens = positiveNumber(
     usage.total_tokens,
     usage.totalTokens,
@@ -124,6 +133,7 @@ export function normalizeTokenUsage(usage) {
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
+    reasoning_tokens: reasoningTokens,
     total_tokens: totalTokens,
     cached_tokens: cachedTokens,
     cache_write_tokens: cacheWriteTokens,
