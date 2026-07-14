@@ -27,7 +27,10 @@ if (process.platform === 'darwin') {
 if (!executable) throw new Error(`未找到 ${process.platform} unpacked 可执行文件`)
 
 const home = mkdtempSync(join(tmpdir(), 'pi-desktop-smoke-'))
-const child = spawn(executable, [], {
+// GitHub 的 Linux Runner 不能把 chrome-sandbox 设置为 root/4755。
+// 只给 CI smoke 关闭 Chromium sandbox，正式安装包启动参数不变。
+const executableArgs = process.platform === 'linux' && process.env.CI ? ['--no-sandbox'] : []
+const child = spawn(executable, executableArgs, {
   env: {
     ...process.env,
     PI_SMOKE_TEST: '1',

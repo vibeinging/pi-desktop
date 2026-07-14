@@ -23,11 +23,12 @@ const targets = [
 ]
 const checkOnly = process.argv.includes('--check')
 const mismatches = []
+const normalizeEol = (value) => String(value || '').replace(/\r\n/g, '\n')
 for (const [relativePath, content] of targets) {
   const path = join(root, relativePath)
   let current = ''
   try { current = readFileSync(path, 'utf8') } catch { /* missing */ }
-  if (current === content) continue
+  if (normalizeEol(current) === normalizeEol(content)) continue
   if (checkOnly) mismatches.push(relativePath)
   else {
     mkdirSync(dirname(path), { recursive: true })
