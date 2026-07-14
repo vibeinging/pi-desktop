@@ -98,7 +98,7 @@ test('新数据库启用外键、字段约束和查询索引', () => {
         await db.query('INSERT INTO session_messages (id,session_id,role,content_items,sequence_number) VALUES ($1,$2,$3,$4,$5)', ['m1','s1','invalid','[]',1]);
       } catch (error) { failures.push(error.code); }
       const foreignKeys = await db.query('PRAGMA foreign_key_list(sessions)');
-      const indexes = await db.query("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_sessions_project_status_deleted_updated','idx_session_messages_active_sequence','idx_agent_runs_session_created') ORDER BY name");
+      const indexes = await db.query("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_sessions_project_status_deleted_updated','idx_session_messages_active_sequence','idx_agent_runs_session_created','idx_agent_transcript_session_sequence') ORDER BY name");
       console.log(JSON.stringify({ failures, foreignKeyCount: foreignKeys.length, indexes: indexes.map((row) => row.name) }));
       db.closeDb();
     `);
@@ -108,6 +108,7 @@ test('新数据库启用外键、字段约束和查询索引', () => {
     assert.equal(output.foreignKeyCount, 1);
     assert.deepEqual(output.indexes, [
       'idx_agent_runs_session_created',
+      'idx_agent_transcript_session_sequence',
       'idx_session_messages_active_sequence',
       'idx_sessions_project_status_deleted_updated',
     ]);
@@ -159,7 +160,7 @@ test('旧数据库按 user_version 顺序迁移并保留现有数据', () => {
     `);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.deepEqual(JSON.parse(result.stdout.trim()), {
-      version: 2,
+      version: 4,
       hasCreatedBy: false,
       hasProjectId: true,
       hasUsers: false,

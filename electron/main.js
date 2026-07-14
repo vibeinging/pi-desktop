@@ -8,12 +8,17 @@
 //
 // 后端进程模型:dev 用系统 node 直跑;prod 用 Electron 自身以 Node 模式运行本地后端。
 
-const { app, BrowserWindow, ipcMain, dialog, screen, shell, nativeImage, Menu, protocol, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, shell, nativeImage, Menu, protocol, session, safeStorage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const http = require('node:http');
 const { fileURLToPath } = require('node:url');
 const { spawn } = require('node:child_process');
+const { BackendProcessManager } = require('./backend-process-manager.cjs');
+const { CredentialStore } = require('./credential-store.cjs');
+const { runPackagedSmoke } = require('./packaged-smoke.cjs');
+const APP_CONFIG = require('./generated-app-config.cjs');
 
 const isDev = !app.isPackaged;
 // 打包后后端和原生依赖位于 app.asar 外，避免 better-sqlite3 无法加载或被临时解包。
@@ -25,12 +30,12 @@ const DIST_INDEX = isDev
   ? path.join(__dirname, '..', 'renderer', 'dist', 'index.html')
   : path.join(app.getAppPath(), 'renderer', 'dist', 'index.html');
 const DEV_URL = process.env.PI_DEV_URL || 'http://localhost:52731';
-const APP_ICON = path.join(__dirname, 'icons', 'icon.png'); // 应用图标
-const APP_NAME = 'pi-desktop';
-const APP_DISPLAY_NAME = 'PI Desktop';
-const LEGACY_USER_DATA_DIR_NAME = 'pi-desktop';
-const LOCAL_FILE_SCHEME = 'pi-desktop-file';
-const DATA_ROOT = path.join(os.homedir(), '.pi-desktop');
+const APP_ICON = path.join(__dirname, '..', APP_CONFIG.icons.png);
+const APP_NAME = APP_CONFIG.shortName;
+const APP_DISPLAY_NAME = APP_CONFIG.productName;
+const LEGACY_USER_DATA_DIR_NAME = APP_CONFIG.userDataDirName;
+const LOCAL_FILE_SCHEME = APP_CONFIG.localFileScheme;
+const DATA_ROOT = path.join(os.homedir(), APP_CONFIG.dataDirName);
 const PROJECTS_ROOT = path.join(DATA_ROOT, 'projects');
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 const localFileRoots = new Set();
@@ -56,17 +61,14 @@ app.setName(APP_NAME);
 app.setPath('userData', getLegacyUserDataPath());
 
 let mainWindow = null;
-let backendProc = null;
 let isQuitting = false;
 let closePromptOpen = false;
-let backendStopping = null;
 let backendStoppedForQuit = false;
 let trustedRendererDocument = false;
-const pending = new Map(); // id → (msg)=>void:后端进程消息按 id 路由(api-request 收集 / stream 转发)
 let reqSeq = 0;
+let packagedSmokeStarted = false;
+let packagedSmokeDeadline = null;
 const CLOSE_BEHAVIOR_VALUES = new Set(['ask', 'minimize', 'quit']);
-const BACKEND_GRACEFUL_SHUTDOWN_MS = 5000;
-const BACKEND_SIGTERM_SHUTDOWN_MS = 2500;
 const MIN_WINDOW_WIDTH = 900;
 const MIN_WINDOW_HEIGHT = 600;
 const MAX_IPC_PATH_LENGTH = 32 * 1024;
@@ -476,9 +478,10 @@ function savePastedTextAttachment(payload = {}) {
 registerLocalFileRoot(PROJECTS_ROOT);
 
 function configureApplicationIdentity() {
+  app.setAppUserModelId(APP_CONFIG.appId);
   if (process.platform === 'darwin') {
     app.setAboutPanelOptions({
-      applicationName: APP_NAME,
+      applicationName: APP_DISPLAY_NAME,
       applicationVersion: app.getVersion(),
       version: app.getVersion(),
       iconPath: APP_ICON,
@@ -595,7 +598,7 @@ function registerLocalFileProtocol() {
 }
 
 // ── 后端生命周期 ──
-function startBackend() {
+function spawnBackendProcess() {
   const entryRel = path.join('src', 'index.js');
   // dev:系统 node;prod:Electron 自身以 Node 模式跑(自包含,需 electron-rebuild 原生模块)
   const cmd = isDev ? (process.env.PI_NODE_BIN || 'node') : process.execPath;
@@ -604,80 +607,178 @@ function startBackend() {
   applyNetworkEnv(env);
   if (isDev) env.PI_TCP = '1'; // dev:后端同时听 TCP,便于 eval 复用运行中的实例;prod 走纯进程通道(零端口)
   if (!isDev) env.ELECTRON_RUN_AS_NODE = '1';
+  // stdio 第 4 个 'ipc':建进程消息通道(process.send/on('message'))，应用内不开放端口。
+  const child = spawn(cmd, args, { cwd: SERVER_DIR, env, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
+  child.on('exit', (code, sig) => console.log(`[electron] 后端退出 code=${code} sig=${sig}`));
+  console.log(`[electron] 后端进程已创建 (${cmd} ${args.join(' ')}, pid=${child.pid})`);
+  return child;
+}
+
+const backendManager = new BackendProcessManager({ spawnProcess: spawnBackendProcess });
+const credentialStore = new CredentialStore({
+  safeStorage,
+  filePath: path.join(app.getPath('userData'), 'credentials.json'),
+});
+
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function inspectPackagedRenderer() {
+  const deadline = Date.now() + 15_000;
+  let lastState = null;
+  while (Date.now() < deadline) {
+    const contents = mainWindow?.webContents;
+    if (contents && !contents.isDestroyed() && !contents.isLoadingMainFrame()) {
+      lastState = await contents.executeJavaScript(`({
+        readyState: document.readyState,
+        hasRoot: Boolean(document.getElementById('app')),
+        hasElectronApi: window.electronAPI?.isElectron === true,
+        bootScreenVisible: Boolean(document.querySelector('.app-boot'))
+      })`);
+      if (lastState?.readyState === 'complete' && lastState.hasRoot && lastState.hasElectronApi && !lastState.bootScreenVisible) {
+        return lastState;
+      }
+    }
+    await wait(50);
+  }
+  if (lastState) return lastState;
+  throw new Error('Renderer 页面加载超时');
+}
+
+async function savePackagedSmokeTextAttachment(payload) {
+  const contents = mainWindow?.webContents;
+  if (!contents || contents.isDestroyed()) throw new Error('Renderer 不可用，无法保存文本附件');
+  return contents.executeJavaScript(
+    `window.electronAPI.savePastedTextAttachment(${JSON.stringify(payload)})`,
+  );
+}
+
+function inspectPackagedSmokeAttachment(filePath) {
+  const target = String(filePath || '');
+  if (!target) return { exists: false, content: '' };
   try {
-    // stdio 第 4 个 'ipc':建进程消息通道(process.send/on('message')),ZCode 式传输(无端口/socket)
-    const child = spawn(cmd, args, { cwd: SERVER_DIR, env, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
-    backendProc = child;
-    child.on('error', (e) => console.error('[electron] 后端启动失败:', e?.message || e));
-    child.on('exit', (code, sig) => {
-      if (backendProc === child) backendProc = null;
-      console.log(`[electron] 后端退出 code=${code} sig=${sig}`);
+    return { exists: fs.statSync(target).isFile(), content: fs.readFileSync(target, 'utf8') };
+  } catch {
+    return { exists: false, content: '' };
+  }
+}
+
+function startPackagedSmokeModelServer() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'not found' } }));
+        return;
+      }
+      req.resume();
+      req.once('end', () => {
+        const chunkBase = {
+          id: 'chatcmpl-packaged-smoke',
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: 'packaged-smoke-model',
+        };
+        res.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-cache',
+          connection: 'close',
+        });
+        res.write(`data: ${JSON.stringify({
+          ...chunkBase,
+          choices: [{ index: 0, delta: { role: 'assistant', content: 'packaged smoke agent reply' }, finish_reason: null }],
+        })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+          ...chunkBase,
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17 },
+        })}\n\n`);
+        res.end('data: [DONE]\n\n');
+      });
     });
-    // 后端回传的消息按 id 路由到对应等待者
-    child.on('message', (m) => { if (m && m.id != null) { const h = pending.get(m.id); if (h) h(m); } });
-    console.log(`[electron] 后端已启动 (${cmd} ${args.join(' ')}, pid=${child.pid})`);
-  } catch (e) {
-    console.error('[electron] 无法启动后端:', e?.message || e);
-  }
-}
-
-function waitForBackendExit(child, timeoutMs) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve(false);
-    }, timeoutMs);
-    const onExit = () => {
-      cleanup();
-      resolve(true);
-    };
-    const cleanup = () => {
-      clearTimeout(timer);
-      child.off('exit', onExit);
-    };
-    child.once('exit', onExit);
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      resolve({
+        baseUrl: `http://127.0.0.1:${address.port}/v1`,
+        stop: () => new Promise((done) => {
+          server.closeAllConnections?.();
+          server.close(() => done());
+        }),
+      });
+    });
   });
 }
 
-function rejectPendingBackendRequests(message = '后端正在关闭') {
-  for (const [id, handler] of pending) {
-    try {
-      handler({ id, type: 'error', error: message });
-    } catch {
-      /* ignore */
-    }
+async function executePackagedSmoke() {
+  let modelServer = null;
+  let exitCode = 1;
+  try {
+    modelServer = await startPackagedSmokeModelServer();
+    const result = await runPackagedSmoke({
+      request: requestBackend,
+      restartBackend: () => backendManager.restart(),
+      inspectRenderer: inspectPackagedRenderer,
+      saveTextAttachment: savePackagedSmokeTextAttachment,
+      inspectAttachment: inspectPackagedSmokeAttachment,
+      modelBaseUrl: modelServer.baseUrl,
+    });
+    console.log(`[smoke] packaged flow passed (messages=${result.messageCount}, attachment=${result.attachmentName})`);
+    exitCode = 0;
+  } catch (error) {
+    console.error('[smoke] packaged flow failed:', error?.stack || error);
+  } finally {
+    clearTimeout(packagedSmokeDeadline);
+    await stopBackend().catch((error) => {
+      console.warn('[smoke] 后端关闭失败:', error?.message || error);
+    });
+    await modelServer?.stop().catch(() => {});
+    app.exit(exitCode);
   }
-  pending.clear();
 }
 
-async function stopBackend() {
-  if (backendStopping) return backendStopping;
-  const child = backendProc;
-  if (!child) return;
-  rejectPendingBackendRequests();
-  backendProc = null;
-  backendStopping = (async () => {
-    if (child.connected) {
-      try { child.disconnect(); } catch { /* ignore */ }
-      if (await waitForBackendExit(child, BACKEND_GRACEFUL_SHUTDOWN_MS)) return;
-    }
-    try { child.kill('SIGTERM'); } catch { /* ignore */ }
-    if (await waitForBackendExit(child, BACKEND_SIGTERM_SHUTDOWN_MS)) return;
-    try { child.kill('SIGKILL'); } catch { /* ignore */ }
-    await waitForBackendExit(child, 1000);
-  })().finally(() => {
-    if (backendStopping) backendStopping = null;
-  });
-  return backendStopping;
+function startPackagedSmoke() {
+  if (packagedSmokeStarted) return;
+  packagedSmokeStarted = true;
+  void executePackagedSmoke();
+}
+
+backendManager.on('state', (state) => {
+  console.log(`[electron] 后端状态: ${state.status}${state.error ? ` (${state.error})` : ''}`);
+  if (process.env.PI_SMOKE_TEST === '1' && state.status === 'ready') {
+    console.log('[smoke] backend ready');
+    startPackagedSmoke();
+  }
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('pi-desktop-backend-state', state);
+  } catch { /* renderer 尚未就绪 */ }
+});
+backendManager.on('backend-message', async (message, child) => {
+  if (message?.type !== 'credential-request' || !message.requestId) return;
+  const response = { type: 'credential-response', requestId: message.requestId };
+  try {
+    if (message.action === 'get') response.value = credentialStore.get(message.ref);
+    else if (message.action === 'set') response.value = credentialStore.set(message.ref, message.value);
+    else if (message.action === 'delete') response.value = credentialStore.delete(message.ref);
+    else throw new Error('不支持的凭据操作');
+    response.ok = true;
+  } catch (error) {
+    response.ok = false;
+    response.error = error?.message || String(error);
+  }
+  try { if (child.connected) child.send(response); } catch { /* 后端已经退出 */ }
+});
+
+function startBackend() {
+  backendManager.start().catch((error) => console.error('[electron] 后端启动失败:', error?.message || error));
+}
+
+function stopBackend() {
+  return backendManager.stop();
 }
 
 function stopBackendSync() {
-  rejectPendingBackendRequests();
-  try { backendProc?.kill('SIGTERM'); } catch { /* ignore */ }
-  backendProc = null;
+  backendManager.stopSync();
 }
-function backendSend(msg) { try { backendProc?.send(msg); } catch { /* backend down */ } }
 
 function minimizeMainWindow(win = mainWindow) {
   try {
@@ -708,7 +809,7 @@ async function handleMainWindowCloseRequest(win = mainWindow) {
   try {
     const result = await dialog.showMessageBox(win, {
       type: 'question',
-      title: '关闭 PI Desktop？',
+      title: `关闭 ${APP_DISPLAY_NAME}？`,
       message: '要关闭应用还是最小化到后台？',
       detail: '最小化会保留本地服务和当前会话；关闭应用会停止后台进程。',
       buttons: ['最小化', '关闭应用', '取消'],
@@ -879,10 +980,10 @@ handleTrustedIpc('network-settings-save', async (_e, settings) => {
   await applyRendererNetworkProxy(saved);
   return saved;
 });
+handleTrustedIpc('backend-status', async () => backendManager.getState());
+handleTrustedIpc('backend-restart', async () => backendManager.restart());
 
-// ── ipc:REST 请求 → 进程消息通道交给后端 registry,收集成一次性响应 ──
-// req = { method, url(/api/...?query), headers, body(string|null) };返回 { status, statusText, headers, json|body }。
-handleTrustedIpc('api-request', async (_e, req) => {
+function requestBackend(req) {
   const request = normalizeBackendRequest(req);
   return new Promise((resolve) => {
     const id = `q${++reqSeq}`;
@@ -891,17 +992,25 @@ handleTrustedIpc('api-request', async (_e, req) => {
     let headers = {};
     let binary = false;
     const chunks = [];
-    pending.set(id, (m) => {
+    backendManager.send({ id, ...request }, (m) => {
       if (m.type === 'head') { status = m.status; statusText = m.statusText; headers = m.headers || {}; }
       else if (m.type === 'data') { if (m.b64) binary = true; chunks.push(m.chunk); }
-      else if (m.type === 'error') { pending.delete(id); resolve({ status: status || 0, statusText: m.error || '', headers, body: chunks.join('') }); }
+      else if (m.type === 'error') {
+        const failedStatus = m.code === 'BACKEND_TIMEOUT' ? 504 : 503;
+        resolve({
+          status: status || failedStatus,
+          statusText: m.error || '本地后端不可用',
+          headers: { 'content-type': 'application/json', ...headers },
+          json: { success: false, code: m.code || 'BACKEND_ERROR', message: m.error || '本地后端不可用', data: null },
+        });
+        return true;
+      }
       else if (m.type === 'end') {
-        pending.delete(id);
         if (binary) {
           // 二进制(blob 下载):各块 base64 解码后拼接,整体再 base64 给前端还原 Blob
           const buf = Buffer.concat(chunks.map((c) => Buffer.from(c, 'base64')));
           resolve({ status, statusText, headers, bodyB64: buf.toString('base64') });
-          return;
+          return true;
         }
         const text = chunks.join('');
         const ct = String(headers['content-type'] || '');
@@ -910,32 +1019,35 @@ handleTrustedIpc('api-request', async (_e, req) => {
         if (/application\/json/i.test(ct)) { try { json = JSON.parse(text); } catch { body = text; } }
         else body = text;
         resolve({ status, statusText, headers, json, body });
+        return true;
       }
+      return false;
     });
-    backendSend({ id, ...request });
   });
-});
+}
+
+// ── ipc:REST 请求 → 进程消息通道交给后端 registry,收集成一次性响应 ──
+// req = { method, url(/api/...?query), headers, body(string|null) };返回 { status, statusText, headers, json|body }。
+handleTrustedIpc('api-request', async (_e, req) => requestBackend(req));
 
 // ── ipc:SSE 流式 → 进程消息通道;后端 res.write 的每块经 message 回传,转给渲染层 ──
 // payload = { id, url, method, headers, body };向 `pi-desktop-stream:<id>` 推 {type:'head'|'data'|'end'|'error'}。
 handleTrustedIpc('stream-start', async (e, payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('流请求参数无效');
   const id = String(payload.id || '');
-  if (!/^[a-zA-Z0-9-]{1,128}$/.test(id) || pending.has(id)) throw new Error('流请求标识无效');
+  if (!/^[a-zA-Z0-9-]{1,128}$/.test(id) || backendManager.pending.has(id)) throw new Error('流请求标识无效');
   const request = normalizeBackendRequest(payload);
   const send = (msg) => { try { if (!e.sender.isDestroyed()) e.sender.send(`pi-desktop-stream:${id}`, msg); } catch { /* renderer gone */ } };
-  pending.set(id, (m) => {
+  backendManager.send({ id, ...request }, (m) => {
     send(m);
-    if (m.type === 'end' || m.type === 'error') pending.delete(id);
-  });
-  backendSend({ id, ...request });
+    return m.type === 'end' || m.type === 'error';
+  }, { stream: true });
   return true;
 });
 onTrustedIpc('stream-abort', (_e, rawId) => {
   const id = String(rawId || '');
   if (!/^[a-zA-Z0-9-]{1,128}$/.test(id)) throw new Error('流请求标识无效');
-  pending.delete(id);
-  backendSend({ id, type: 'abort' });
+  backendManager.abort(id);
 });
 
 // ── app 生命周期 ──
@@ -948,6 +1060,12 @@ app.whenReady().then(async () => {
     try { app.dock.setIcon(nativeImage.createFromPath(APP_ICON)); } catch { /* ignore */ }
   }
   await applyRendererNetworkProxy();
+  if (process.env.PI_SMOKE_TEST === '1') {
+    packagedSmokeDeadline = setTimeout(() => {
+      console.error('[smoke] packaged flow timed out');
+      app.exit(1);
+    }, 40_000);
+  }
   startBackend();
   createWindow();
   app.on('activate', () => {
@@ -968,7 +1086,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', (event) => {
   isQuitting = true;
-  if (!backendProc || backendStoppedForQuit) return;
+  if (backendStoppedForQuit) return;
   event.preventDefault();
   stopBackend().finally(() => {
     backendStoppedForQuit = true;

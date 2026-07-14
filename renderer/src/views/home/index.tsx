@@ -3,6 +3,7 @@
 // 整窗可拖拽(透明窗口需要 -webkit-app-region: drag 才能移动)。
 import { Center, Stack, Text, Title } from '@mantine/core'
 import classes from './home.module.scss'
+import { appConfig } from '@/generated/app-config'
 
 export default function HomePage() {
   return (
@@ -10,10 +11,10 @@ export default function HomePage() {
       <Center h="100vh" w="100vw">
         <Stack align="center" gap="xs" className={classes.card}>
           <Title order={1} size="h1">
-            PI Desktop
+            {appConfig.productName}
           </Title>
           <Text c="dimmed" size="lg">
-            pi-desktop 桌面框架底座 · Electron + React + 本地后端
+            {appConfig.shortName} 桌面框架底座 · Electron + React + 本地后端
           </Text>
         </Stack>
       </Center>

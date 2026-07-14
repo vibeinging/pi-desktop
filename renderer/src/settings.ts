@@ -1,6 +1,7 @@
 /**
  * Renderer 全局设置。
  */
+import { appConfig } from '@/generated/app-config'
 export interface AppSettings {
   title: string
   sidebarLogo: boolean
@@ -22,7 +23,7 @@ export interface AppSettings {
 }
 
 export const settings: AppSettings = {
-  title: 'PI Desktop',
+  title: appConfig.productName,
   sidebarLogo: true,
   showNavbarTitle: false,
   ShowDropDown: true,
@@ -34,8 +35,8 @@ export const settings: AppSettings = {
   mainNeedAnimation: false,
   delWindowHeight: '210px',
   viteBasePath: '/',
-  defaultLanguage: 'zh',
-  defaultTheme: 'pi-purple',
+  defaultLanguage: appConfig.defaultLocale,
+  defaultTheme: appConfig.defaultTheme,
   defaultSize: 'default',
   plateFormId: 2,
   enableDocs: true

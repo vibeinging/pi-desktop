@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Agent } from '@earendil-works/pi-agent-core';
 import { Type } from '@earendil-works/pi-ai';
+import { APP_CONFIG } from '../../generated/app-config.js';
 import {
   createBashTool,
   createEditTool,
@@ -14,19 +15,33 @@ import {
   createWriteTool,
 } from '../../../vendor/pi/coding-agent/dist/core/tools/index.js';
 import { ModelConfigResolver } from '../core/llm.js';
-import { appendMessages, loadTranscript, rewriteTranscript, trimToBudget } from './sessionStore.js';
-import { buildPiModel, createPiStreamFn, ensurePiProviders, normalizePiUsageForTrace } from './pi_runtime.js';
+import {
+  appendMessages,
+  ensureTranscriptProjection,
+  loadTranscript,
+  rewriteTranscript,
+  trimToBudget,
+} from './sessionStore.js';
+import { assistantMessageTraceText, buildPiModel, createPiStreamFn, ensurePiProviders, normalizePiUsageForTrace } from './pi_runtime.js';
 import { acquireMcpToolsForSession } from './mcp_tools.js';
-import { formatPiSkillInstructions, listEnabledAppSkills, listEnabledPiSkills } from './pi_skill_registry.js';
+import { recordTraceLlmCall, withAgentToolLifecycles } from '../trace/trace_context.js';
+import {
+  formatPiSkillInstructions,
+  listEnabledAppSkills,
+  listEnabledPiSkills,
+  renderPiSkillsIndexPrompt,
+} from './pi_skill_registry.js';
 
 const CHAT_WORKSPACE_ID = '__chat__';
 const WRITE_TOOLS = new Set(['write', 'edit', 'bash']);
+const SKILL_CONTROL_TOOLS = new Set(['use_skill', 'update_plan']);
+const DEFAULT_TOOLS = new Set(APP_CONFIG.defaultTools || []);
 
-const SYSTEM_PROMPT = `你是 PI Desktop 中的通用 Agent。
-使用简洁、准确的中文帮助用户完成任务。
-你可以使用 read、grep、ls、find 读取工作区，使用 write、edit 修改文件，使用 bash 执行命令。
-需要多步处理时，使用 update_plan 向用户展示进度。
-只使用当前实际提供的工具，不虚构未配置的能力。`;
+function isDefaultToolEnabled(toolName) {
+  return DEFAULT_TOOLS.has(toolName) || (String(toolName).startsWith('mcp_') && DEFAULT_TOOLS.has('mcp_*'));
+}
+
+const SYSTEM_PROMPT = APP_CONFIG.defaultSystemPrompt;
 
 function safeSegment(value) {
   return String(value || 'default').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 160) || 'default';
@@ -42,15 +57,15 @@ export function workspaceCwd(projectId, sessionId = null) {
     } catch { /* fall through */ }
   }
   if (id === CHAT_WORKSPACE_ID) {
-    return join(homedir(), '.pi-desktop', 'projects', CHAT_WORKSPACE_ID, safeSegment(sessionId));
+    return join(homedir(), APP_CONFIG.dataDirName, 'projects', CHAT_WORKSPACE_ID, safeSegment(sessionId));
   }
-  return join(homedir(), '.pi-desktop', 'projects', safeSegment(id));
+  return join(homedir(), APP_CONFIG.dataDirName, 'projects', safeSegment(id));
 }
 
 /** 手动收缩模型上下文；界面消息仍完整保留在 SQLite。 */
-export async function compactSession({ sessionId }) {
+export async function compactSession({ db, sessionId }) {
   if (!sessionId) return { compacted: false, message: '没有会话可压缩' };
-  const transcript = loadTranscript(sessionId);
+  const transcript = await loadTranscript(db, sessionId);
   if (!Array.isArray(transcript) || transcript.length < 8) {
     return { compacted: false, message: '对话较短，无需压缩' };
   }
@@ -64,7 +79,7 @@ export async function compactSession({ sessionId }) {
     timestamp: Date.now(),
   };
   const next = [summary, ...recent];
-  rewriteTranscript(sessionId, next);
+  await rewriteTranscript(db, sessionId, next);
   return { compacted: true, before, after: next.length };
 }
 
@@ -96,6 +111,7 @@ function historyFromRows(rows, model) {
     if (typeof blocks === 'string') {
       try { blocks = JSON.parse(blocks); } catch { blocks = []; }
     }
+    if (Array.isArray(blocks) && blocks.some((block) => block?.type === 'compact')) continue;
     const text = (Array.isArray(blocks) ? blocks : [])
       .map(historyBlockText)
       .join('\n')
@@ -118,10 +134,70 @@ function historyFromRows(rows, model) {
   return messages;
 }
 
+function sourceSequenceFromRows(rows) {
+  let sequence = 0;
+  for (const row of rows || []) {
+    let blocks = row.content_items;
+    if (typeof blocks === 'string') {
+      try { blocks = JSON.parse(blocks); } catch { blocks = []; }
+    }
+    if (Array.isArray(blocks) && blocks.some((block) => block?.type === 'compact')) continue;
+    if (!['user', 'assistant'].includes(row.role)) continue;
+    sequence = Math.max(sequence, Number(row.sequence_number || 0));
+  }
+  return sequence;
+}
+
 function abortError() {
   const error = new Error('用户已停止任务');
   error.name = 'AbortError';
   return error;
+}
+
+export function isToolAllowedForSkill(toolName, skill) {
+  const name = String(toolName || '');
+  if (!name || SKILL_CONTROL_TOOLS.has(name) || !skill) return true;
+  const allowed = Array.isArray(skill.allowed_tools) ? skill.allowed_tools.filter(Boolean) : [];
+  if (allowed.length === 0) return true;
+  if (allowed.includes(name)) return true;
+  return name.startsWith('mcp_') && allowed.includes('mcp_*');
+}
+
+export function createBeforeToolCall({ getActiveSkill, approval, awaitDecision } = {}) {
+  return async ({ toolCall }, signal) => {
+    const name = toolCall?.name || '';
+    const activeSkill = getActiveSkill?.() || null;
+    if (!isToolAllowedForSkill(name, activeSkill)) {
+      return {
+        block: true,
+        reason: `Skill「${activeSkill.name}」不允许使用工具「${name}」`,
+      };
+    }
+    if ((!WRITE_TOOLS.has(name) && !name.startsWith('mcp_')) || approval === 'full') return undefined;
+    if (typeof awaitDecision !== 'function') return undefined;
+    const allowed = await awaitDecision({ id: toolCall.id, name, arguments: toolCall.arguments }, signal);
+    if (!allowed) return { block: true, reason: '用户拒绝了该工具调用' };
+    return undefined;
+  };
+}
+
+export function createUseSkillTool(skills, onActivate) {
+  const promptSkills = (skills || []).filter((skill) => (skill.runtime || 'prompt') === 'prompt');
+  return {
+    name: 'use_skill',
+    description: '读取并激活一个已启用的 Prompt Skill。激活后，工具白名单会由代码强制执行。',
+    parameters: Type.Object({ name: Type.String() }),
+    execute: async (_id, params) => {
+      const requested = String(params?.name || '').trim();
+      const skill = promptSkills.find((item) => item.name === requested);
+      if (!skill) {
+        const available = promptSkills.map((item) => item.name).join(', ') || '无';
+        throw new Error(`Skill「${requested}」不可用。当前可用: ${available}`);
+      }
+      onActivate?.(skill);
+      return { content: [{ type: 'text', text: formatPiSkillInstructions(skill) }] };
+    },
+  };
 }
 
 /** 把 transport 的取消信号桥接到 pi Agent，后者再传给模型和工具。 */
@@ -183,65 +259,77 @@ export class WorkspaceAgent {
       await mcp.release();
       throw abortError();
     }
-    const tools = [
-      planTool,
-      createReadTool(cwd), createGrepTool(cwd), createLsTool(cwd), createFindTool(cwd),
-      createWriteTool(cwd), createEditTool(cwd), createBashTool(cwd),
-      ...mcp.tools,
-    ];
-
     let skills = [];
     try {
       skills = projectId === CHAT_WORKSPACE_ID || String(projectId).startsWith('folder:')
         ? await listEnabledAppSkills(context.db)
         : await listEnabledPiSkills(context.db, projectId);
     } catch { /* Skill 配置异常不阻断对话 */ }
-    const skillPrompt = skills
-      .filter((skill) => (skill.runtime || 'prompt') === 'prompt')
-      .map(formatPiSkillInstructions)
-      .join('\n\n---\n\n');
-    const systemPrompt = skillPrompt ? `${SYSTEM_PROMPT}\n\n## 已启用 Skills\n\n${skillPrompt}` : SYSTEM_PROMPT;
+    let activeSkill = null;
+    const promptSkills = skills.filter((skill) => (skill.runtime || 'prompt') === 'prompt');
+    const tools = withAgentToolLifecycles([
+      planTool,
+      ...(promptSkills.length ? [createUseSkillTool(promptSkills, (skill) => { activeSkill = skill; })] : []),
+      createReadTool(cwd), createGrepTool(cwd), createLsTool(cwd), createFindTool(cwd),
+      createWriteTool(cwd), createEditTool(cwd), createBashTool(cwd),
+      ...mcp.tools,
+    ].filter((tool) => isDefaultToolEnabled(tool.name)), {
+      project_id: projectId,
+      session_id: sessionId,
+    });
+    const skillIndexPrompt = renderPiSkillsIndexPrompt(promptSkills);
+    const systemPrompt = skillIndexPrompt ? `${SYSTEM_PROMPT}${skillIndexPrompt}` : SYSTEM_PROMPT;
 
-    let history = loadTranscript(sessionId);
-    if (!Array.isArray(history)) {
-      history = historyFromRows(await context.loadHistory?.(), model);
-      if (history.length) rewriteTranscript(sessionId, history);
-    }
+    const historyRows = await context.loadHistory?.() || [];
+    const fallbackHistory = historyFromRows(historyRows, model);
+    let history = await ensureTranscriptProjection(context.db, sessionId, {
+      fallbackMessages: fallbackHistory,
+      sourceSequenceNumber: sourceSequenceFromRows(historyRows),
+    });
     history = trimToBudget(history);
-    let persistedCount = history.length;
+    let queuedCount = history.length;
 
     const agent = new this.AgentClass({
       initialState: { systemPrompt, model, tools, messages: history },
       sessionId,
       streamFn: createPiStreamFn({ apiKey: cfg.api_key, extraConfig: cfg.extra_config, timeoutMs: context.settings?.timeoutMs }),
-      beforeToolCall: async ({ toolCall }, signal) => {
-        const name = toolCall?.name || '';
-        if ((!WRITE_TOOLS.has(name) && !name.startsWith('mcp_')) || context.approval === 'full') return undefined;
-        if (typeof context.awaitDecision !== 'function') return undefined;
-        const allowed = await context.awaitDecision({ id: toolCall.id, name, arguments: toolCall.arguments }, signal);
-        if (!allowed) return { block: true, reason: '用户拒绝了该工具调用' };
-        return undefined;
-      },
+      beforeToolCall: createBeforeToolCall({
+        getActiveSkill: () => activeSkill,
+        approval: context.approval,
+        awaitDecision: context.awaitDecision,
+      }),
     });
     context.onAgent?.(agent);
 
+    let flushQueue = Promise.resolve();
     const flush = () => {
       const all = agent.state?.messages || [];
-      if (all.length > persistedCount) {
-        appendMessages(sessionId, all.slice(persistedCount));
-        persistedCount = all.length;
-      }
+      if (all.length <= queuedCount) return flushQueue;
+      const pending = all.slice(queuedCount);
+      queuedCount = all.length;
+      flushQueue = flushQueue.then(() => appendMessages(context.db, sessionId, pending));
+      return flushQueue;
     };
     const args = new Map();
     let textId = randomUUID();
     let thinkingId = randomUUID();
+    let turnStartedAt = Date.now();
     const unsubscribe = agent.subscribe(async (event) => {
       if (event.type === 'turn_start') {
+        turnStartedAt = Date.now();
         textId = randomUUID();
         thinkingId = randomUUID();
       } else if (event.type === 'turn_end') {
-        flush();
+        await flush();
         const usage = normalizePiUsageForTrace(event.message?.usage);
+        recordTraceLlmCall({
+          callSite: 'workspace_agent',
+          model: model.id,
+          input: context.input_data?.raw_user_message || context.input_data?.user_message || '',
+          output: assistantMessageTraceText(event.message),
+          usage,
+          durationMs: Date.now() - turnStartedAt,
+        });
         if (usage) await streamCallback('', { content_id: textId, content_type: 'markdown', usage, model: model.id });
       } else if (event.type === 'message_update') {
         const partial = event.assistantMessageEvent?.partial;
@@ -281,8 +369,11 @@ export class WorkspaceAgent {
       return result.cancelled ? { success: false, cancelled: true } : { success: true };
     } finally {
       unsubscribe();
-      flush();
-      await mcp.release();
+      try {
+        await flush();
+      } finally {
+        await mcp.release();
+      }
     }
   }
 }

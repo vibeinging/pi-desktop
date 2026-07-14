@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../../errors.js';
 import { invalidateModelConfigCache } from '../../engine/core/llm.js';
+import {
+  deleteCredential,
+  isCredentialRef,
+  resolveCredential,
+  storeModelCredential,
+} from '../../credentials.js';
 
 const CATEGORIES = new Set(['PRIMARY', 'SECONDARY', 'EMBEDDING']);
 const FORMATS = new Set(['anthropic', 'chat_completions', 'responses']);
@@ -58,12 +64,18 @@ export async function createModel(ctx, input) {
   const existing = await ctx.queryOne('SELECT id FROM llm_models WHERE category=$1 AND project_id IS $2 AND deleted_at IS NULL', [model.category, model.projectId]);
   if (existing) throw new ApiError('该角色已有模型，请先编辑或删除');
   const id = randomUUID();
-  await ctx.query(
-    `INSERT INTO llm_models
-      (id,model_name,display_name,category,api_base,api_key,api_format,is_enabled,extra_config,project_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-    [id, model.modelName, model.displayName, model.category, model.apiBase, model.apiKey, model.apiFormat, model.isEnabled ? 1 : 0, model.extraConfig, model.projectId],
-  );
+  const credentialRef = model.apiKey ? await storeModelCredential(id, model.apiKey) : null;
+  try {
+    await ctx.query(
+      `INSERT INTO llm_models
+        (id,model_name,display_name,category,api_base,api_key,api_format,is_enabled,extra_config,project_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [id, model.modelName, model.displayName, model.category, model.apiBase, credentialRef, model.apiFormat, model.isEnabled ? 1 : 0, model.extraConfig, model.projectId],
+    );
+  } catch (error) {
+    if (credentialRef) await deleteCredential(credentialRef).catch(() => {});
+    throw error;
+  }
   invalidateModelConfigCache();
   return getModelDetail(ctx, { query: { model_id: id } });
 }
@@ -72,25 +84,45 @@ export async function updateModel(ctx, input) {
   const id = input.body?.id || input.body?.model_id;
   const current = await ctx.queryOne('SELECT * FROM llm_models WHERE id=$1 AND deleted_at IS NULL', [id]);
   if (!current) throw new ApiError('模型不存在', 404);
-  const merged = normalizeBody({ ...current, ...input.body, api_key: String(input.body?.api_key || '').includes('****') ? current.api_key : input.body?.api_key ?? current.api_key });
-  await ctx.query(
-    `UPDATE llm_models SET model_name=$1,display_name=$2,category=$3,api_base=$4,api_key=$5,
-      api_format=$6,extra_config=$7,is_enabled=$8,updated_at=CURRENT_TIMESTAMP WHERE id=$9`,
-    [merged.modelName, merged.displayName, merged.category, merged.apiBase, merged.apiKey, merged.apiFormat, merged.extraConfig, merged.isEnabled ? 1 : 0, id],
-  );
+  const hasNewSecret = Object.prototype.hasOwnProperty.call(input.body || {}, 'api_key')
+    && !String(input.body?.api_key || '').includes('****');
+  let credentialRef = current.api_key;
+  let createdRef = null;
+  if (hasNewSecret) {
+    const nextSecret = String(input.body?.api_key || '');
+    createdRef = nextSecret ? await storeModelCredential(id, nextSecret) : null;
+    credentialRef = createdRef;
+  }
+  const merged = normalizeBody({ ...current, ...input.body, api_key: credentialRef });
+  try {
+    await ctx.query(
+      `UPDATE llm_models SET model_name=$1,display_name=$2,category=$3,api_base=$4,api_key=$5,
+        api_format=$6,extra_config=$7,is_enabled=$8,updated_at=CURRENT_TIMESTAMP WHERE id=$9`,
+      [merged.modelName, merged.displayName, merged.category, merged.apiBase, credentialRef, merged.apiFormat, merged.extraConfig, merged.isEnabled ? 1 : 0, id],
+    );
+  } catch (error) {
+    if (createdRef) await deleteCredential(createdRef).catch(() => {});
+    throw error;
+  }
+  if (hasNewSecret && isCredentialRef(current.api_key) && current.api_key !== credentialRef) {
+    await deleteCredential(current.api_key).catch(() => {});
+  }
   invalidateModelConfigCache();
   return getModelDetail(ctx, { query: { model_id: id } });
 }
 
 export async function deleteModel(ctx, input) {
   const id = input.body?.model_id || input.params?.modelId;
+  const current = await ctx.queryOne('SELECT api_key FROM llm_models WHERE id=$1 AND deleted_at IS NULL', [id]);
   await ctx.query('UPDATE llm_models SET deleted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$1', [id]);
+  if (isCredentialRef(current?.api_key)) await deleteCredential(current.api_key).catch(() => {});
   invalidateModelConfigCache();
   return null;
 }
 
 export async function testModelConfig(_ctx, input) {
   const config = normalizeBody(input.body);
+  config.apiKey = await resolveCredential(config.apiKey);
   const base = config.apiBase.replace(/\/+$/, '');
   const headers = { 'content-type': 'application/json' };
   if (config.apiKey) headers.authorization = `Bearer ${config.apiKey}`;

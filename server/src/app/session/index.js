@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { ApiError } from '../../errors.js';
+import {
+  deleteLegacyTranscript,
+  exportTranscriptJsonl,
+  withSessionLock,
+} from '../../engine/agents/sessionStore.js';
 
 const parseContent = (value) => {
   try { return JSON.parse(value || '[]'); } catch { return []; }
@@ -108,9 +113,43 @@ export async function persistSessionMessage(ctx, {
 }
 
 export async function deleteSession(ctx, input) {
+  const sessionId = input.params.sid;
+  return withSessionLock(sessionId, async () => {
+    await getSession(ctx, input);
+    const atomicDelete = ctx.deleteSessionData || ctx.db?.deleteSessionData;
+    if (typeof atomicDelete === 'function') {
+      atomicDelete(sessionId);
+    } else {
+      // 轻量测试上下文的兼容路径；生产 makeCtx 使用上面的原子事务。
+      await ctx.query('DELETE FROM agent_pending_inputs WHERE session_id=$1', [sessionId]);
+      await ctx.query('DELETE FROM agent_runs WHERE session_id=$1', [sessionId]);
+      await ctx.query('DELETE FROM session_messages WHERE session_id=$1', [sessionId]);
+      await ctx.query('DELETE FROM agent_transcript_messages WHERE session_id=$1', [sessionId]);
+      await ctx.query('DELETE FROM agent_transcript_state WHERE session_id=$1', [sessionId]);
+      await ctx.query(
+        'UPDATE sessions SET message_count=0,deleted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$1',
+        [sessionId],
+      );
+    }
+    let cleanupWarning = null;
+    try {
+      deleteLegacyTranscript(sessionId);
+    } catch (error) {
+      cleanupWarning = error?.message || String(error);
+      console.warn(`[session transcript] ${sessionId} 旧文件清理失败: ${cleanupWarning}`);
+    }
+    return { id: input.params.sid, cleanup_warning: cleanupWarning };
+  }, { signal: ctx.signal });
+}
+
+export async function exportSessionTranscript(ctx, input) {
   await getSession(ctx, input);
-  await ctx.query('UPDATE sessions SET deleted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$1', [input.params.sid]);
-  return { id: input.params.sid };
+  const sessionId = input.params.sid;
+  return {
+    filename: `${sessionId}.jsonl`,
+    content_type: 'application/x-ndjson',
+    content: await exportTranscriptJsonl(ctx.db, sessionId),
+  };
 }
 
 export async function listMessages(ctx, input) {
@@ -125,6 +164,14 @@ export async function listMessages(ctx, input) {
 }
 
 export async function appendMessage(ctx, input) {
+  return withSessionLock(
+    input.params.sid,
+    () => appendMessageUnlocked(ctx, input),
+    { signal: ctx.signal },
+  );
+}
+
+async function appendMessageUnlocked(ctx, input) {
   await getSession(ctx, input);
   const role = String(input.body?.role || 'user');
   if (!['user', 'assistant', 'system', 'tool'].includes(role)) throw new ApiError('消息角色无效');

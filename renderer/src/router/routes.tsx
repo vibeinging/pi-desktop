@@ -1,5 +1,6 @@
 import { type RouteObject, redirect } from 'react-router-dom'
 import RouteGuard from './RouteGuard'
+import { appConfig } from '@/generated/app-config'
 
 export interface RouteMeta {
   title?: string
@@ -8,8 +9,8 @@ export interface RouteMeta {
 }
 
 export const constantRoutes = [
-  { path: '/', name: 'Home', meta: { title: 'PI Desktop' } },
-  { path: '/agent', name: 'Agent', meta: { title: 'PI Desktop' } },
+  { path: '/', name: 'Home', meta: { title: appConfig.productName } },
+  { path: '/agent', name: 'Agent', meta: { title: appConfig.productName } },
   { path: '/401', name: 'Unauthorized', meta: { public: true } },
   { path: '/404', name: 'NotFound', meta: { public: true } }
 ]

@@ -5,6 +5,7 @@ import { ModalsProvider } from '@mantine/modals'
 import { I18nextProvider } from 'react-i18next'
 import i18n from '@/lang'
 import { mantineTheme } from '@/theme/mantineTheme'
+import BackendStatusBanner from '@/components/BackendStatusBanner'
 
 // Mantine 样式入口(全局,一次性引入)
 import '@mantine/core/styles.css'
@@ -22,7 +23,10 @@ export default function AppProviders({ children }: { children: ReactNode }) {
     <I18nextProvider i18n={i18n}>
       <MantineProvider theme={mantineTheme} defaultColorScheme="light">
         <Notifications position="top-center" />
-        <ModalsProvider>{children}</ModalsProvider>
+        <ModalsProvider>
+          <BackendStatusBanner />
+          {children}
+        </ModalsProvider>
       </MantineProvider>
     </I18nextProvider>
   )

@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { resolveCredentialMap } from "../../credentials.js";
+import { APP_VERSION } from "../../version.js";
+import { APP_CONFIG } from "../../generated/app-config.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -324,9 +327,10 @@ export async function connectMcpProvider(provider, options = {}) {
   const normalized = normalizeMcpProviderRow(provider);
   if (!normalized?.command) throw new Error("MCP Provider 缺少 command");
   if (normalized.transport !== "stdio") throw new Error(`暂不支持的 MCP transport: ${normalized.transport}`);
+  normalized.env = await resolveCredentialMap(normalized.env);
 
   const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_TIMEOUT_MS;
-  const client = new Client({ name: "pi-desktop", version: "0.0.1" });
+  const client = new Client({ name: APP_CONFIG.shortName, version: APP_VERSION });
   const stderrChunks = [];
   const transport = new StdioClientTransport({
     command: normalized.command,

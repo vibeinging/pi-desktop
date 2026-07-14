@@ -5,33 +5,45 @@
 //
 //   业务通过 transport/registry.js 按需挂载。
 import "./config/network.js";
-import { closeDb, queryOne } from './db.js';
+import { closeDb, query, queryOne } from './db.js';
+import { migrateLegacyCredentials } from './credentials.js';
 import { ensureDbModelConfigProvider } from './engine/core/model_config_provider.js';
+import { closeYiTrace, warmupYiTrace } from './app/observability/providers/yitrace/provider.js';
 
 ensureDbModelConfigProvider({ queryOne });
 
 process.on("unhandledRejection", (e) => console.error("[unhandledRejection]", e?.message || e));
 process.on("uncaughtException", (e) => console.error("[uncaughtException]", e?.message || e));
 
-const shutdown = () => {
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try { await closeYiTrace(); } catch { /* ignore */ }
   try { closeDb(); } catch { /* ignore */ }
   process.exit(0);
 };
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
-process.on("disconnect", shutdown);
+process.on("SIGTERM", () => { void shutdown(); });
+process.on("SIGINT", () => { void shutdown(); });
+process.on("disconnect", () => { void shutdown(); });
+
+setTimeout(() => { void warmupYiTrace(); }, 0).unref?.();
 
 const PORT = Number(process.env.SERVER_PORT || 52838);
 
 // ── app 路径:被 Electron 主进程以 ipc 通道 fork(process.send 可用)→ 进程消息派发到 registry 用例 ──
 // app 内实例零 HTTP/端口/express;仅当独立启动 或 PI_TCP=1 时下方再起 TCP(给 eval/CI)。
 if (typeof process.send === "function") {
-  import("./transport/ipc_server.js").then(({ handleIpcMessage, abortIpcStream }) => {
+  import("./transport/ipc_server.js").then(async ({ handleIpcMessage, abortIpcStream }) => {
     process.on("message", (msg) => {
       if (!msg || msg.id == null) return;
+      if (msg.type === 'credential-response') return;
       if (msg.type === "abort") { abortIpcStream(msg.id); return; }
       handleIpcMessage(msg, (m) => { try { process.send(m); } catch { /* main 退出 */ } });
     });
+    const migration = await migrateLegacyCredentials({ query });
+    if (migration.errors.length) console.warn('[credentials] 部分旧密钥迁移失败:', migration.errors.join('; '));
+    try { process.send({ type: 'backend-ready' }); } catch { /* main 已退出 */ }
     console.log("🟢 desktop server (node) ready on process IPC channel (registry, express-free app path)");
   });
 }

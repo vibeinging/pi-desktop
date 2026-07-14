@@ -10,6 +10,7 @@ export const PI_TOOL_CATALOG = [
   { name: "write", description: "创建或覆盖工作区文件,执行前受权限确认控制。", safety: "write" },
   { name: "edit", description: "编辑工作区文件,执行前受权限确认控制。", safety: "write" },
   { name: "bash", description: "在工作区执行 shell 命令,执行前受权限确认控制。", safety: "execute" },
+  { name: "mcp_*", description: "允许当前项目启用的全部 MCP 工具。", safety: "external" },
 ];
 
 // 底座不预装任何业务 Skill；用户可在设置中创建通用 Skill。
@@ -19,6 +20,10 @@ export const CHAT_SKILL_SCOPE = "__chat__";
 
 const BUILTIN_BY_NAME = new Map(BUILTIN_PI_SKILLS.map((s) => [s.name, s]));
 const TOOL_NAMES = new Set(PI_TOOL_CATALOG.map((t) => t.name));
+
+function isKnownAllowedTool(name) {
+  return TOOL_NAMES.has(name) || /^mcp_[a-zA-Z0-9_]{1,59}$/.test(name);
+}
 
 function parseJson(value, fallback = {}) {
   if (!value) return fallback;
@@ -52,15 +57,22 @@ function cleanTags(value) {
 
 function cleanAllowedTools(value) {
   return Array.isArray(value)
-    ? value.map((x) => cleanString(x, 64)).filter((x) => TOOL_NAMES.has(x)).slice(0, 24)
+    ? value.map((x) => cleanString(x, 64)).filter(isKnownAllowedTool).slice(0, 24)
     : [];
 }
 
 function assertKnownAllowedTools(value) {
   if (!Array.isArray(value)) return;
   const requested = value.map((x) => cleanString(x, 64)).filter(Boolean);
-  const unknown = [...new Set(requested.filter((x) => !TOOL_NAMES.has(x)))];
+  const unknown = [...new Set(requested.filter((x) => !isKnownAllowedTool(x)))];
   if (unknown.length) throw new ApiError(`未知工具:${unknown.join(", ")}`, 400);
+}
+
+function assertSupportedRuntime(value) {
+  const runtime = cleanString(value, 32) || "prompt";
+  if (runtime !== "prompt") {
+    throw new ApiError(`暂不支持的 Skill 运行类型:${runtime};当前仅支持 prompt`, 400);
+  }
 }
 
 function maybeRuntime(value) {
@@ -518,6 +530,7 @@ export async function getAppSkill(ctx, rawName) {
 
 export async function createAppSkill(ctx, data = {}) {
   const name = normalizeSkillName(data.name);
+  assertSupportedRuntime(data.runtime);
   if (BUILTIN_BY_NAME.has(name)) throw new ApiError("不能创建与内置 Skill 同名的自定义 Skill", 400);
   const existing = await findAppSkillRow(ctx, name);
   if (existing) throw new ApiError("Skill 已存在", 409);
@@ -534,6 +547,7 @@ export async function createAppSkill(ctx, data = {}) {
 
 export async function updateAppSkill(ctx, rawName, data = {}) {
   const name = normalizeSkillName(rawName);
+  if (Object.prototype.hasOwnProperty.call(data, "runtime")) assertSupportedRuntime(data.runtime);
   if (BUILTIN_BY_NAME.has(name)) throw new ApiError("内置 Skill 不支持编辑定义,只能启用或禁用", 400);
   const existing = await findAppSkillRow(ctx, name);
   if (!existing) throw new ApiError("Skill 不存在", 404);

@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { join, relative, resolve } from "node:path";
 import { readdirSync, statSync, readFileSync } from "node:fs";
 import { compactSession, workspaceCwd } from "../../engine/agents/workspace_agent.js";
+import { withSessionLock } from "../../engine/agents/sessionStore.js";
 import { ModelConfigResolver } from "../../engine/core/llm.js";
 import {
   PI_TOOL_CATALOG,
@@ -159,10 +160,15 @@ export async function getAgentFile(ctx, input) {
 
 // POST /api/agent/projects/:pid/sessions/:sid/compact — 手动压缩会话上下文(/compact)
 export async function compactAgentSession(ctx, input) {
+  const sid = input.params.sid;
+  return withSessionLock(sid, () => compactAgentSessionUnlocked(ctx, input), { signal: ctx.signal });
+}
+
+async function compactAgentSessionUnlocked(ctx, input) {
   try {
     const sid = input.params.sid;
-    const r = await compactSession({ projectId: input.params.pid, sessionId: sid });
-    // 成功压缩 → 往会话流插入一条「压缩分割线」标记(进 SQL,刷新后仍在;模型侧 JSONL 已单独压缩)
+    const r = await compactSession({ db: ctx.db, projectId: input.params.pid, sessionId: sid });
+    // 成功压缩 → 往界面会话流插入一条「压缩分割线」标记；模型侧 transcript 已在同一 SQLite 中重写。
     if (r.compacted) {
       try {
         const seqRow = await ctx
@@ -182,9 +188,10 @@ export async function compactAgentSession(ctx, input) {
         };
         await ctx
           .query(
-            `INSERT INTO session_messages (id,session_id,role,content_items,sequence_number,created_at,updated_at)
-             VALUES ($1,$2,'assistant',$3,$4,now(),now())`,
-            [randomUUID(), sid, JSON.stringify([block]), seq],
+            `INSERT INTO session_messages
+              (id,session_id,role,content_items,message_metadata,sequence_number,created_at,updated_at)
+             VALUES ($1,$2,'assistant',$3,$4,$5,now(),now())`,
+            [randomUUID(), sid, JSON.stringify([block]), JSON.stringify({ exclude_from_agent: true }), seq],
           )
           .catch(() => {});
       } catch {

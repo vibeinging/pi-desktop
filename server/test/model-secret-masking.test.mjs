@@ -9,10 +9,18 @@ test('模型详情不返回明文 API key，提交掩码时保留原密钥', asy
   process.env.PI_DB_PATH = join(home, 'local.db');
   const db = await import('../src/db.js');
   const models = await import('../src/app/models/index.js');
+  const credentials = await import('../src/credentials.js');
+  const secrets = new Map();
+  credentials.setCredentialProvider({
+    get: async (ref) => secrets.get(ref) ?? null,
+    set: async (ref, value) => { secrets.set(ref, value); return true; },
+    delete: async (ref) => secrets.delete(ref),
+  });
   const ctx = { query: db.query, queryOne: db.queryOne };
 
   t.after(() => {
     db.closeDb();
+    credentials.setCredentialProvider(null);
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -36,5 +44,6 @@ test('模型详情不返回明文 API key，提交掩码时保留原密钥', asy
   assert.equal(updated.api_key, '********');
 
   const stored = await db.queryOne('SELECT api_key FROM llm_models WHERE id=$1', [created.id]);
-  assert.equal(stored.api_key, 'real-secret-key');
+  assert.match(stored.api_key, /^credential:model:/);
+  assert.equal(secrets.get(stored.api_key), 'real-secret-key');
 });

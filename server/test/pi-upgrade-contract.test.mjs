@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
@@ -98,13 +98,26 @@ test('pi Agent 的构造、订阅、prompt 和状态接口保持可用', async (
 test('WorkspaceAgent 仍装配七个 coding tools，并使用新版 edit 参数结构', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'pi-desktop-tools-'));
   const sessionId = `upgrade-tools-${Date.now()}`;
-  const transcriptPath = join(homedir(), '.pi-desktop', 'agent-sessions', `${sessionId}.jsonl`);
   const projectId = `folder:${Buffer.from(cwd).toString('base64url')}`;
   const [{ WorkspaceAgent }, { ModelConfigResolver }] = await Promise.all([
     import('../src/engine/agents/workspace_agent.js'),
     import('../src/engine/core/llm.js'),
   ]);
   let capturedOptions;
+  const transcript = [];
+  const transcriptDb = {
+    async loadAgentTranscript() { return transcript.length ? [...transcript] : null; },
+    appendAgentTranscript({ messages }) {
+      transcript.push(...messages);
+      return { count: messages.length };
+    },
+    replaceAgentTranscript({ messages }) {
+      transcript.splice(0, transcript.length, ...messages);
+      return { count: messages.length };
+    },
+    async query() { return []; },
+    async queryOne() { return null; },
+  };
 
   class CapturingAgent {
     constructor(options) {
@@ -141,6 +154,7 @@ test('WorkspaceAgent 仍装配七个 coding tools，并使用新版 edit 参数�
       input_data: { user_message: '检查工具' },
       approval: 'full',
       settings: {},
+      db: transcriptDb,
       loadHistory: async () => [],
     }, async () => {});
 
@@ -159,7 +173,6 @@ test('WorkspaceAgent 仍装配七个 coding tools，并使用新版 edit 参数�
     assert.ok(editTool?.parameters?.properties?.edits, 'v0.80.6 edit 应使用 edits 数组');
   } finally {
     ModelConfigResolver.setProvider(null);
-    rmSync(transcriptPath, { force: true });
     rmSync(cwd, { recursive: true, force: true });
   }
 });
@@ -206,6 +219,21 @@ test('三种模型 API 会映射到正确的 pi API 和内置 provider', async (
     assert.equal(captured.options.cacheRetention, 'long');
     assert.equal(typeof captured.options.onPayload, 'function');
   }
+
+  let localOptions;
+  const localStreamFn = runtime.createPiStreamFn({
+    apiKey: null,
+    baseStreamFn: (_model, _context, options) => {
+      localOptions = options;
+      return { local: true };
+    },
+  });
+  await localStreamFn(runtime.buildPiModel({
+    model_name: 'local-model',
+    api_base: 'http://127.0.0.1:11434/v1',
+    api_format: 'chat_completions',
+  }), { systemPrompt: '', messages: [] }, {});
+  assert.equal(localOptions.apiKey, 'unused', '本地无鉴权模型使用非敏感占位值满足客户端协议');
 });
 
 test('pi usage 保留 reasoning 和缓存用量，reasoning 不重复计入 total', async () => {

@@ -1,4 +1,5 @@
 import createDOMPurify, { type Config, type DOMPurify } from 'dompurify'
+import { appConfig } from '@/generated/app-config'
 
 const MARKDOWN_TAGS = [
   'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'details', 'div', 'dl', 'dt',
@@ -17,7 +18,7 @@ const MARKDOWN_CONFIG: Config = {
   ALLOWED_ATTR: [...MARKDOWN_ATTRS],
   ALLOW_ARIA_ATTR: true,
   ALLOW_DATA_ATTR: false,
-  // pi-desktop-file 由下面的 URL hook 精确放行；其它未知协议仍会被 hook 拒绝。
+  // 本地文件 scheme 由下面的 URL hook 精确放行；其它未知协议仍会被 hook 拒绝。
   ALLOW_UNKNOWN_PROTOCOLS: true,
   FORBID_TAGS: ['base', 'button', 'embed', 'form', 'iframe', 'input', 'link', 'meta', 'object', 'script', 'select', 'style', 'svg', 'template', 'textarea'],
   FORBID_ATTR: ['formaction', 'srcdoc'],
@@ -58,7 +59,7 @@ export function isSafeHtmlUrl(value: string, tagName: string, attrName: string) 
 
   if (attr === 'src') {
     if (tag !== 'img') return false
-    if (/^https?:\/\//i.test(url) || /^pi-desktop-file:\/\//i.test(url)) return true
+    if (/^https?:\/\//i.test(url) || url.startsWith(`${appConfig.localFileScheme}://`)) return true
     if (SAFE_DATA_IMAGE.test(url)) return true
     return isRelativeResource(url)
   }

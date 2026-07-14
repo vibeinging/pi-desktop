@@ -1,6 +1,6 @@
 {
   "name": "pi-desktop-renderer",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "PI Desktop 的 React 渲染层。",
   "author": "PI Desktop contributors",
