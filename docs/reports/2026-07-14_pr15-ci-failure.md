@@ -18,6 +18,10 @@ Git 在 Windows checkout 时把文本文件转换为 CRLF。`scripts/generate-ap
 
 最小修复：比较前统一 CRLF 和 LF；生成内容仍统一写成 LF。
 
+新一轮 CI 证明配置检查已经通过，但随后发现旧 JSONL 迁移测试只设置了 Unix 使用的 `HOME`。Windows 的 `os.homedir()` 使用 `USERPROFILE`，导致测试把旧文件写入一个目录、业务代码从另一个目录读取。
+
+最小修复：测试子进程同时设置 `HOME` 和 `USERPROFILE`，让三平台都把临时用户目录指向测试目录。业务代码不变。
+
 ## Linux
 
 失败步骤：`xvfb-run --auto-servernum npm run smoke:package`
@@ -30,6 +34,7 @@ Electron 找到了 `chrome-sandbox`，但 GitHub Runner 无法把它设置成 ro
 
 1. 完成上述两处小范围修改。已完成。
 2. 本地运行配置检查、脚本语法检查和现有测试。已完成：配置检查通过，两个脚本语法检查通过，Electron 10 项测试全部通过，`git diff --check` 通过。
-3. 提交并推送修复。
-4. 等待 PR #15 三平台 CI 全部通过。
-5. 合并到 `main`，不打 tag，不创建 Release。
+3. 修复新发现的 Windows 测试目录差异，并重新运行服务端测试。已完成：使用项目指定的 Node 22.19.0，服务端 39 项测试全部通过。
+4. 提交并推送修复。
+5. 等待 PR #15 三平台 CI 全部通过。
+6. 合并到 `main`，不打 tag，不创建 Release。

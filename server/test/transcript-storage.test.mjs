@@ -10,7 +10,12 @@ const root = resolve(import.meta.dirname, '..', '..');
 function run(dir, source) {
   return spawnSync(process.execPath, ['--input-type=module', '-e', source], {
     cwd: root,
-    env: { ...process.env, HOME: dir, PI_DB_PATH: join(dir, 'local.db') },
+    env: {
+      ...process.env,
+      HOME: dir,
+      USERPROFILE: dir,
+      PI_DB_PATH: join(dir, 'local.db'),
+    },
     encoding: 'utf8',
   });
 }
