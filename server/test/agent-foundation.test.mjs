@@ -14,6 +14,14 @@ import {
 import { promptAgentWithSignal, WorkspaceAgent } from '../src/engine/agents/workspace_agent.js';
 import { ModelConfigResolver } from '../src/engine/core/llm.js';
 import { createDbModelConfigProvider } from '../src/engine/core/model_config_provider.js';
+import { setCredentialProvider } from '../src/credentials.js';
+
+const testCredentials = new Map();
+setCredentialProvider({
+  get: async (ref) => testCredentials.get(ref) ?? null,
+  set: async (ref, value) => { testCredentials.set(ref, value); return true; },
+  delete: async (ref) => testCredentials.delete(ref),
+});
 
 const root = resolve(import.meta.dirname, '..', '..');
 
@@ -131,16 +139,16 @@ test('通用 Agent 的项目、会话、Skill、MCP 和失败历史可持久化'
   }
 });
 
-test('首轮完整调用链在 JSONL 中只写入一次用户消息', () => {
+test('首轮完整调用链在 SQLite transcript 中只写入一次用户消息', () => {
   const dir = mkdtempSync(join(tmpdir(), 'pi-desktop-first-turn-'));
   const dbPath = join(dir, 'local.db');
   const source = `
     const db = await import('./server/src/db.js');
+    const { makeCtx } = await import('./server/src/ctx.js');
     const projects = await import('./server/src/app/projects/index.js');
     const sessions = await import('./server/src/app/session/index.js');
     const { agentChat } = await import('./server/src/app/chat/agent_chat.js');
     const { WorkspaceAgent } = await import('./server/src/engine/agents/workspace_agent.js');
-    const { loadTranscript } = await import('./server/src/engine/agents/sessionStore.js');
     const { ModelConfigResolver } = await import('./server/src/engine/core/llm.js');
 
     class FakeAgent {
@@ -162,18 +170,25 @@ test('首轮完整调用链在 JSONL 中只写入一次用户消息', () => {
       api_format: 'chat_completions', is_enabled: true, extra_config: {}
     }));
     WorkspaceAgent.create = async () => new WorkspaceAgent({ AgentClass: FakeAgent });
-    const ctx = { query: db.query, queryOne: db.queryOne, db: { query: db.query, queryOne: db.queryOne } };
+    const ctx = makeCtx();
     const project = await projects.createProject(ctx, { body: { name: 'first-turn' } });
     const session = await sessions.createSession(ctx, { params: { pid: project.id }, body: { title: 'first' } });
     await agentChat(ctx, {
       params: { pid: project.id, sid: session.id },
       body: { message: '读取附件', attachments: [{ path: '/tmp/a.txt', name: 'a.txt' }] }
     }, () => {});
-    const transcript = loadTranscript(session.id);
+    const transcript = await db.loadAgentTranscript(session.id);
+    const transcriptState = db.getAgentTranscriptState(session.id);
+    const visibleHistory = await db.queryOne(
+      'SELECT COALESCE(MAX(sequence_number),0) AS sequence_number FROM session_messages WHERE session_id=$1',
+      [session.id],
+    );
     console.log(JSON.stringify({
       userCount: transcript.filter((item) => item.role === 'user').length,
       total: transcript.length,
-      prompt: transcript.find((item) => item.role === 'user')?.content?.[0]?.text || ''
+      prompt: transcript.find((item) => item.role === 'user')?.content?.[0]?.text || '',
+      sourceSequenceNumber: transcriptState?.source_sequence_number,
+      visibleSequenceNumber: visibleHistory?.sequence_number
     }));
     db.closeDb();
   `;
@@ -188,6 +203,7 @@ test('首轮完整调用链在 JSONL 中只写入一次用户消息', () => {
     assert.equal(output.userCount, 1);
     assert.equal(output.total, 2);
     assert.match(output.prompt, /\/tmp\/a\.txt/);
+    assert.equal(output.sourceSequenceNumber, output.visibleSequenceNumber);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -220,7 +236,7 @@ test('Agent 消息会持久化附件并且首轮不会重复注入当前消息',
       },
     }, (event) => events.push(event));
 
-    assert.deepEqual(observed.history, [], '初始化 JSONL 时必须排除本轮已写入 SQLite 的消息');
+    assert.deepEqual(observed.history, [], '初始化 transcript 时必须排除本轮已写入的界面消息');
     assert.deepEqual(observed.input.attachments, [
       { path: '/tmp/report.md', name: 'report.md', is_dir: false },
       { path: '/tmp/source', name: 'source', is_dir: true },
@@ -308,14 +324,16 @@ test('模型 resolver 只选启用模型并拒绝 provider 返回的停用模型
     queryOne: async (sql) => {
       capturedSql = sql;
       return {
-        id: 'm1', model_name: 'enabled', api_base: 'https://example.test/v1', api_key: 'key',
+        id: 'm1', model_name: 'enabled', api_base: 'https://example.test/v1', api_key: null,
         category: 'PRIMARY', api_format: 'chat_completions', extra_config: '{}', is_enabled: 1,
       };
     },
   });
   const config = await provider({ project_id: 'p1', category: 'PRIMARY' });
   assert.match(capturedSql, /is_enabled\s*=\s*1/);
+  assert.doesNotMatch(capturedSql, /api_key\s+IS\s+NOT\s+NULL/i);
   assert.equal(config.is_enabled, true);
+  assert.equal(config.api_key, null, '本地无鉴权模型也应可被选中');
 
   ModelConfigResolver.setProvider(async () => ({
     model_name: 'disabled', api_base: 'https://example.test/v1', api_key: 'key', is_enabled: false,

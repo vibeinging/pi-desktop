@@ -2,6 +2,7 @@ import {
   appendMessage,
   createSession,
   deleteSession,
+  exportSessionTranscript,
   getSession,
   listMessages,
   listSessions,
@@ -16,6 +17,7 @@ export const sessionRoutes = [
   { m: 'PUT', p: '/api/projects/:pid/sessions/:sid', fn: updateSession },
   { m: 'POST', p: '/api/projects/:pid/sessions/:sid/move', fn: moveSession },
   { m: 'DELETE', p: '/api/projects/:pid/sessions/:sid', fn: deleteSession },
+  { m: 'GET', p: '/api/projects/:pid/sessions/:sid/transcript/export', fn: exportSessionTranscript },
   { m: 'GET', p: '/api/projects/:pid/sessions/:sid/messages', fn: listMessages },
   { m: 'POST', p: '/api/projects/:pid/sessions/:sid/messages', fn: appendMessage },
 ];

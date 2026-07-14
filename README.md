@@ -4,12 +4,12 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Upstream: earendil-works/pi](https://img.shields.io/badge/upstream-earendil--works%2Fpi-24292f?logo=github)](https://github.com/earendil-works/pi)
 
-一个基于 [earendil-works/pi](https://github.com/earendil-works/pi) 的本地桌面 Agent 底座。
+一个基于 [earendil-works/pi](https://github.com/earendil-works/pi) 的本地优先桌面 Agent 底座。
 
-PI Desktop 把 Electron、React、本地 Node.js 后端、SQLite、模型配置、Skills、MCP 和本地工具放在同一个仓库里。你可以直接在它上面开发自己的桌面 Agent，不必从窗口管理、进程通信、会话保存和工具调用重新搭建。
+PI Desktop 把 Electron、React、本地 Node.js 后端、SQLite、模型配置、Skills、MCP 和本地工具放在同一个仓库里。你可以直接 fork 这个项目开发代码助手、文件助手或其他桌面 Agent，不必重新搭建窗口管理、进程通信、会话存储、工具审批和桌面打包。
 
 > [!IMPORTANT]
-> PI Desktop 是独立的社区项目，不是 `earendil-works/pi` 的官方桌面客户端。当前仍是开发者预览版：核心开发和 macOS arm64 打包链路已经可用，但还没有正式安装包、代码签名和自动升级。
+> PI Desktop 是独立的社区项目，不是 `earendil-works/pi` 的官方桌面客户端。当前仍是开发者预览版：本地开发、核心 Agent 链路和 macOS arm64 目录打包已经验证，但还没有公开的正式安装包和自动升级。
 
 ## 与 pi 的关系
 
@@ -20,13 +20,25 @@ PI Desktop 把 Electron、React、本地 Node.js 后端、SQLite、模型配置�
 ## 已有能力
 
 - 本地优先：桌面主链路不开放 HTTP，界面通过 Electron IPC 访问本地后端。
+- 进程恢复：后端异常退出会立即结束等待请求，并按有限次数自动重启；界面会显示恢复状态。
 - Agent 会话：支持流式回复、附件、上下文压缩、停止运行和历史恢复。
 - 本地工作区：提供文件读取、搜索、编辑和 Shell 工具；写入与执行操作受确认控制。
-- 模型配置：支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 及常见兼容接口。
-- Skills 和 MCP：可以在应用设置中创建 Skill、接入使用 `stdio` 的 MCP Server，并按项目启用。
+- 模型配置：支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 及常见兼容接口；本地无鉴权接口可以不填 API Key。
+- Skills 和 MCP：可以创建 Prompt Skill、接入使用 `stdio` 的 MCP Server，并按项目启用；Agent 通过 `use_skill` 激活 Skill，工具白名单由代码强制执行。
 - 数据持久化：保留 `better-sqlite3`，用于项目、会话、消息、模型、Skills、MCP 和 Agent 运行记录。
 - 桌面安全边界：启用 Electron sandbox、CSP、导航限制、IPC 来源校验和 Markdown/HTML 清洗。
 - 可重复构建：提供统一 setup、检查、pi 构建和 Electron 隔离打包脚本。
+
+## 当前验证状态
+
+截至 2026-07-14，本机已通过：
+
+- 37 个 Server 测试、15 个 Renderer 测试、10 个 Electron 测试和 2 个扩展示例测试。
+- `npm run check`，包含配置与版本同步、Node/Renderer 静态检查、类型检查、全部测试和构建。
+- macOS arm64 未签名目录包构建。
+- 真实打包应用 smoke：加载 Renderer 和 preload，通过进程 IPC 启动本地 Server，使用本机假模型完成 pi Agent 首轮流式对话，并验证 SQLite、模型、Prompt Skill、MCP 配置、文本附件、后端重启恢复和删除清理。
+
+Windows、Linux 和 macOS x64 的流程已经写入 GitHub Actions，但仍要以当前改动合并后的首次远端 CI 结果为准。
 
 ## 适合什么项目
 
@@ -85,12 +97,16 @@ npm run dev
 | --- | --- |
 | `npm run setup` | 安装三个子项目的依赖并准备 pi 运行文件 |
 | `npm run dev` | 启动 Renderer、Electron 和本地后端 |
-| `npm run test` | 运行 Server 与 Renderer 测试 |
-| `npm run lint` | 检查 Renderer 代码 |
+| `npm run test` | 运行 Server、Renderer、Electron 和扩展示例测试 |
+| `npm run lint` | 检查 Renderer、Server、Electron、脚本和示例代码 |
 | `npm run typecheck` | 运行 TypeScript 检查 |
 | `npm run build` | 构建 vendored pi 和 Renderer |
-| `npm run check` | 依次运行 lint、类型检查、测试和构建 |
+| `npm run check` | 检查配置和版本同步，再运行 lint、类型检查、测试和构建 |
 | `npm run package:dir` | 生成当前平台的未签名 Electron 应用目录 |
+| `npm run smoke:package` | 启动当前平台目录包并运行完整 smoke |
+| `npm run package` | 生成当前平台正式格式的安装包；签名由环境变量决定 |
+| `npm run release:verify` | 检查版本、许可证、产物和发布前条件 |
+| `npm run release:sbom` | 生成 Server、Renderer 和 Electron 的 SBOM |
 
 依赖由 `server/package-lock.json`、`renderer/package-lock.json` 和 `electron/package-lock.json` 分别固定。修改依赖后，请提交对应 lockfile。
 
@@ -110,7 +126,9 @@ npm run package:dir
 
 它不会修改开发目录里的 `server/node_modules`，因此系统 Node.js 和 Electron 可以分别使用正确的原生模块。
 
-当前已经验证 `release/mac-arm64/PI Desktop.app` 可以启动、访问 IPC API 并读写 SQLite。该产物没有签名，也不是 `.dmg`、`.exe` 或 Linux 安装包。
+PR 合并到 `main` 后，push CI 会在 macOS、Windows 和 Linux 生成 unpacked 应用，并通过真实 Electron 和本机假模型验证 Renderer、preload、pi Agent 首轮流式对话、内置 Server IPC、SQLite 写入、模型/Prompt Skill/MCP 配置、文本附件、后端重启恢复和删除清理。只能在同一提交回归成功后打 tag；正式 tag workflow 会再次检查合并与回归结果，再生成签名安装包、校验和、SBOM 和 Draft Release。密钥要求与回滚方法见 [发布手册](docs/reports/2026-07-13_release-guide.md)。
+
+正常发布顺序固定为：合并到 `main` → 三平台回归 → 人工回归 → 打 tag → 出包 → 安装验收 → 公开 Release。不要先打 tag 再补回归。
 
 ## 在底座上开发
 
@@ -125,7 +143,13 @@ npm run package:dir
 | 通用外部工具 | MCP |
 | 提示词和流程能力 | Skills |
 
+产品名、App ID、URL 协议、数据目录、图标、默认语言、主题、系统提示词和默认工具统一写在 [`app.config.json`](app.config.json)。修改后运行 `npm run config:generate`，CI 会检查 Electron、Server、Renderer 和启动页生成文件是否同步。
+
+如果只是开发一个自己的桌面 Agent，建议先修改 `app.config.json` 完成品牌和默认能力配置，再从项目笔记助手示例复制一个最小业务模块。这样可以保留底座的进程恢复、SQLite、权限和发布流程，减少直接修改核心层的范围。
+
 业务逻辑不要直接写进 IPC 或 HTTP 层。新增文件、Shell 或 MCP 能力时，需要说明权限范围、取消方式和输出上限，并增加对应测试。
+
+当前稳定版本只支持 Prompt Skill。Service 和 Workflow 尚未定义可靠的执行协议，Server 会拒绝保存这两种类型。Skill 的 `allowed_tools` 会在工具执行前检查；空名单表示不增加限制，`mcp_*` 表示允许当前项目启用的全部 MCP 工具。
 
 `server/vendor/pi/` 固定了当前使用的 pi 版本。不要直接覆盖该目录；升级步骤和本地修改见 [server/vendor/README.md](server/vendor/README.md)。
 
@@ -135,18 +159,24 @@ npm run package:dir
 2. 在 `server/src/transport/registry.<feature>.js` 注册方法和路径，再合并到 `registry.js`。
 3. 在 `server/test/` 增加成功、失败和取消场景测试；Renderer 通过 API 适配层调用。
 
+完整的 Server、路由、SQLite 迁移、Renderer 页面、Prompt Skill、stdio MCP 和测试可以直接参考 [项目笔记助手示例](examples/project-notes-assistant/README.md)。
+
 ## 数据与安全
 
 默认本地数据：
 
 ```text
-~/.pi-desktop/local.db   项目、会话、消息和配置
+~/.pi-desktop/local.db   项目、会话权威历史、Agent 上下文投影和配置
 ~/.pi-desktop/projects/  工作区文件
 ```
 
+Electron 的窗口设置、网络设置和加密凭据文件保存在操作系统分配的应用数据目录。模型密钥和 MCP 敏感环境变量不会写入 `local.db`。
+
+`session_messages` 是会话权威历史，供用户查看；Agent transcript 是带版本基线、可以从权威历史恢复的上下文投影，供模型保留工具调用和压缩结果。同一会话的 Agent、压缩和删除会串行执行。老版本的 `~/.pi-desktop/agent-sessions/*.jsonl` 会在首次打开对应会话时导入 SQLite，并改名为 `.migrated`，运行时不再写 JSONL。会话 transcript 也可通过服务端导出接口保存为 JSONL。
+
 测试和自动化请设置 `PI_DB_PATH`，避免读写个人数据库。
 
-模型密钥和 MCP 环境变量目前保存在本地 SQLite 中，读取接口不会返回明文，但落盘还没有接入系统凭据存储。不要共享数据库文件，也不要把密钥写进仓库。
+模型密钥和 MCP 环境变量通过 Electron `safeStorage` 加密后保存在本地凭据文件中，SQLite 只保存 `credential:*` 引用，Renderer 不会得到明文。旧版数据库中的明文会在桌面后端启动时迁移；Linux 必须提供 Secret Service，`basic_text` 后端会被拒绝。不要把密钥写进仓库。
 
 安全问题请阅读 [SECURITY.md](SECURITY.md)，不要直接公开包含利用细节的 Issue。
 
@@ -172,11 +202,12 @@ npm --prefix renderer run dev
 
 ## 当前限制
 
-- 扩展接口和数据库结构还没有进入稳定兼容期。
+- 当前是 `0.1.0` 开发者预览版，扩展接口和数据库结构还没有进入稳定兼容期。
 - MCP 当前只支持 `stdio` transport。
-- macOS、Windows 和 Linux CI 已接通；正式安装包仍需分别验证。
-- 尚无正式安装包、代码签名、公证和自动升级。
-- 模型与 MCP 密钥尚未接入系统凭据存储。
+- Skill 当前只支持 Prompt 类型；Service 和 Workflow 会被 Server 拒绝。
+- 安装包级自动测试尚未覆盖工具确认与拒绝、Skill 实际激活和真实 MCP 工具调用；发布前仍需人工回归。
+- macOS、Windows 和 Linux 的打包流程已配置，但仍需在合并后的同一提交上完成首次远端验证。
+- 正式安装包、代码签名和公证需要发布密钥并通过首个 tag workflow；自动升级尚未实现。
 - Renderer 主包仍需继续拆分和减小体积。
 
 ## 项目目录
@@ -186,8 +217,10 @@ electron/       Electron 主进程、preload 和打包配置
 renderer/       React 界面
 server/         本地后端、SQLite 和 Agent 运行时
 server/vendor/  固定版本的 pi 源码与第三方许可
-eval/           桌面 smoke 和评测工具
-docs/           面向开发者的公开发布记录
+eval/           本地评测和调试工具
+examples/       可运行的扩展示例
+scripts/        setup、检查、打包、smoke 和发布脚本
+docs/           规格、设计、发布手册和检查报告
 ```
 
 ## 文档
@@ -197,6 +230,7 @@ docs/           面向开发者的公开发布记录
 - [安全说明](SECURITY.md)
 - [MIT 许可证](LICENSE)
 - [第三方代码说明](THIRD_PARTY_NOTICES.md)
+- [发布手册](docs/reports/2026-07-13_release-guide.md)
 - [公开发布检查](docs/reports/2026-07-13_public-release-check.md)
 
 ## 许可证

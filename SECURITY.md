@@ -6,7 +6,7 @@ PI Desktop 当前是开发者预览版，尚未发布稳定版本。`main` 分�
 
 ## 报告安全问题
 
-请不要为未修复漏洞创建公开 Issue。仓库托管到 GitHub 后，请使用仓库 `Security` 页的私密漏洞报告；如果该入口尚未开启，请私下联系仓库维护者。公开发布前，维护者应在这里补充一个长期有效的安全联系渠道。
+请不要为未修复漏洞创建公开 Issue。请使用 [GitHub 私密漏洞报告](https://github.com/vibeinging/pi-desktop/security/advisories/new)；该入口只对报告者和维护者可见。
 
 报告请包含：
 
@@ -21,7 +21,8 @@ PI Desktop 当前是开发者预览版，尚未发布稳定版本。`main` 分�
 - 模型文本、Markdown、网页内容、MCP 返回、Skill 内容和导入文件都属于不可信输入。
 - Electron preload 是网页与本机能力之间的边界。不要把任意命令、任意文件路径或通用 IPC 直接暴露给 Renderer。
 - 本地工具可能读写文件或执行命令。用户取消后，后端任务也必须停止，不能只停止界面输出。
-- 模型密钥、MCP 环境变量和数据库文件都属于敏感信息。目前本地数据库未加密，不要共享 `~/.pi-desktop/`。
+- 模型密钥、MCP 环境变量和数据库文件都属于敏感信息。密钥通过 Electron `safeStorage` 加密，SQLite 只保存引用；数据库本身仍未加密，不要共享 `~/.pi-desktop/`。
+- Linux 必须使用 Secret Service。检测到 `basic_text` 时应用拒绝保存密钥，不会静默降级。
 
 ## HTTP 调试接口
 
@@ -38,7 +39,7 @@ PI Desktop 当前是开发者预览版，尚未发布稳定版本。`main` 分�
 
 - 对模型 Markdown/HTML 做可靠清洗，并限制窗口跳转和新窗口。
 - 为 Electron 启用合适的 sandbox 与内容安全策略。
-- 使用系统凭据存储保存密钥。
+- 确认系统凭据迁移完成，SQLite 中不存在旧明文密钥。
 - 验证取消操作能中止模型和工具执行。
 - 在干净环境运行 `npm run setup` 和 `npm run check`。
 - 审核生产依赖和所有随包分发的第三方许可证。

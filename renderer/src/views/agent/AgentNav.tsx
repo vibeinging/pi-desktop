@@ -31,6 +31,7 @@ import ContextMenu, { type MenuItem } from './ContextMenu'
 import { isPinned, loadPins, savePins, togglePin, type Pins } from './pins'
 import { applyWsOrder, loadWsOrder, saveWsOrder } from './wsOrder'
 import styles from './agent.module.scss'
+import { appConfig } from '@/generated/app-config'
 
 export interface Workspace {
   id: string
@@ -459,7 +460,7 @@ export default function AgentNav({
       <div className={styles.railFoot}>
         <div className={styles.brand}>
           <span className={styles.brandMark} aria-hidden="true">π</span>
-          <span className={styles.brandName}>PI Desktop</span>
+          <span className={styles.brandName}>{appConfig.productName}</span>
         </div>
         <button type="button" className={styles.settingsBtn} onClick={() => onOpenSettings?.()} title="设置">
           <IconSettings size={17} stroke={1.7} className={styles.settingsGear} />

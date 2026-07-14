@@ -4,6 +4,9 @@ import { WorkspaceAgent } from '../../engine/agents/workspace_agent.js';
 import { createStreamEvent, StreamEventType, StreamVisibility } from '../../transport/agent_stream_protocol.js';
 import { pendingDecisions } from './agent_misc.js';
 import { persistSessionMessage } from '../session/index.js';
+import { withSessionLock } from '../../engine/agents/sessionStore.js';
+import { runWithTraceContext } from '../../engine/trace/trace_context.js';
+import { createYiTraceRecorder } from '../observability/providers/yitrace/provider.js';
 import {
   buildAttachmentContextMessage,
   buildUserContentItems,
@@ -11,6 +14,14 @@ import {
 } from './message_blocks.js';
 
 export async function agentChat(ctx, input, emit) {
+  return withSessionLock(
+    input.params.sid,
+    () => runAgentChat(ctx, input, emit),
+    { signal: ctx.signal },
+  );
+}
+
+async function runAgentChat(ctx, input, emit) {
   const projectId = input.params.pid;
   const sessionId = input.params.sid;
   const message = String(input.body?.message || '').trim();
@@ -37,7 +48,16 @@ export async function agentChat(ctx, input, emit) {
     'INSERT INTO agent_runs (id,session_id,project_id,status,mode) VALUES ($1,$2,$3,$4,$5)',
     [runId, sessionId, projectId, 'running', 'workspace'],
   );
+  const trace = createYiTraceRecorder({
+    projectId,
+    sessionId,
+    runId,
+    mode: 'workspace',
+    question: buildAttachmentContextMessage(message, attachments),
+  });
   emit(createStreamEvent({ type: StreamEventType.RUN_STARTED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.HIDDEN, payload: { status: 'running' } }));
+
+  const answerText = () => [...assistantBlocks.values()].map((block) => block.content || '').filter(Boolean).join('\n\n');
 
   const callback = async (content, meta = {}) => {
     const type = meta.content_type || 'markdown';
@@ -67,77 +87,89 @@ export async function agentChat(ctx, input, emit) {
 
   try {
     const agent = await WorkspaceAgent.create();
-    const result = await agent.execute({
-      project_id: projectId,
-      session_id: sessionId,
-      input_data: {
-        user_message: buildAttachmentContextMessage(message, attachments),
-        raw_user_message: message,
-        attachments,
-      },
-      db: { query: ctx.query, queryOne: ctx.queryOne },
-      signal: ctx.signal,
-      approval: input.body?.approval || 'ask',
-      settings: input.body?.settings || {},
-      awaitDecision: ({ id, name, arguments: args }) => new Promise((resolve) => {
-        let settled = false;
-        let timer;
-        const finish = (approved) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          ctx.signal?.removeEventListener('abort', abortDecision);
-          if (pendingDecisions.get(id) === finish) pendingDecisions.delete(id);
-          resolve(Boolean(approved));
-        };
-        const abortDecision = () => finish(false);
-        if (ctx.signal?.aborted) {
-          finish(false);
-          return;
-        }
-        timer = setTimeout(() => finish(false), 5 * 60 * 1000);
-        timer.unref?.();
-        pendingDecisions.set(id, finish);
-        ctx.signal?.addEventListener('abort', abortDecision, { once: true });
-        emit(createStreamEvent({
-          type: StreamEventType.APPROVAL_REQUESTED,
-          runId,
-          sessionId,
-          messageId,
-          seq: ++seq,
-          visibility: StreamVisibility.ACTION,
-          payload: { tool_call_id: id, name, arguments: args || {} },
-        }));
-      }),
-      loadHistory: () => ctx.query(
-        'SELECT role,content_items FROM session_messages WHERE session_id=$1 AND id<>$2 AND deleted_at IS NULL ORDER BY sequence_number',
-        [sessionId, userMessageId],
-      ),
-    }, callback);
+    const result = await runWithTraceContext(trace, () => agent.execute({
+        project_id: projectId,
+        session_id: sessionId,
+        input_data: {
+          user_message: buildAttachmentContextMessage(message, attachments),
+          raw_user_message: message,
+          attachments,
+        },
+        db: ctx.db,
+        signal: ctx.signal,
+        approval: input.body?.approval || 'ask',
+        settings: input.body?.settings || {},
+        awaitDecision: ({ id, name, arguments: args }) => new Promise((resolve) => {
+          let settled = false;
+          let timer;
+          const finish = (approved) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            ctx.signal?.removeEventListener('abort', abortDecision);
+            if (pendingDecisions.get(id) === finish) pendingDecisions.delete(id);
+            resolve(Boolean(approved));
+          };
+          const abortDecision = () => finish(false);
+          if (ctx.signal?.aborted) {
+            finish(false);
+            return;
+          }
+          timer = setTimeout(() => finish(false), 5 * 60 * 1000);
+          timer.unref?.();
+          pendingDecisions.set(id, finish);
+          ctx.signal?.addEventListener('abort', abortDecision, { once: true });
+          emit(createStreamEvent({
+            type: StreamEventType.APPROVAL_REQUESTED,
+            runId,
+            sessionId,
+            messageId,
+            seq: ++seq,
+            visibility: StreamVisibility.ACTION,
+            payload: { tool_call_id: id, name, arguments: args || {} },
+          }));
+        }),
+        loadHistory: () => ctx.query(
+          'SELECT role,content_items,sequence_number FROM session_messages WHERE session_id=$1 AND id<>$2 AND deleted_at IS NULL ORDER BY sequence_number',
+          [sessionId, userMessageId],
+        ),
+      }, callback));
     if (ctx.signal?.aborted || result?.cancelled) {
       await ctx.query('UPDATE agent_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2', ['cancelled', runId]);
+      await trace.finish({ status: 'cancelled', output: answerText() });
       emit(createStreamEvent({ type: StreamEventType.RUN_CANCELLED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.HIDDEN, payload: { status: 'cancelled' } }));
       return { success: false, cancelled: true };
     }
     const blocks = [...assistantBlocks.values()];
+    let sourceSequenceNumber = Number(userMessage.sequence_number || 0);
     if (blocks.length) {
-      await persistSessionMessage(ctx, {
+      const assistantMessage = await persistSessionMessage(ctx, {
         sessionId,
         role: 'assistant',
         contentItems: blocks,
         metadata: { run_id: runId },
       });
+      sourceSequenceNumber = Number(assistantMessage.sequence_number || sourceSequenceNumber);
     }
-    await ctx.query('UPDATE agent_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2', ['completed', runId]);
+    const completeAndSync = ctx.completeAgentRunAndSync || ctx.db?.completeAgentRunAndSync;
+    if (typeof completeAndSync === 'function') {
+      await completeAndSync({ runId, sessionId, sourceSequenceNumber });
+    } else {
+      await ctx.query('UPDATE agent_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2', ['completed', runId]);
+      await ctx.db?.markAgentTranscriptSynchronized?.(sessionId, sourceSequenceNumber);
+    }
+    await trace.finish({ status: 'completed', output: answerText() });
     emit(createStreamEvent({ type: StreamEventType.RUN_COMPLETED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.HIDDEN, payload: { status: 'completed' } }));
     return { success: true };
   } catch (error) {
     if (ctx.signal?.aborted || error?.name === 'AbortError') {
       await ctx.query('UPDATE agent_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2', ['cancelled', runId]);
+      await trace.finish({ status: 'cancelled', output: answerText() });
       emit(createStreamEvent({ type: StreamEventType.RUN_CANCELLED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.HIDDEN, payload: { status: 'cancelled' } }));
       return { success: false, cancelled: true };
     }
     await ctx.query('UPDATE agent_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,metadata_json=$2,updated_at=CURRENT_TIMESTAMP WHERE id=$3', ['failed', JSON.stringify({ error: error?.message || String(error) }), runId]);
+    await trace.finish({ status: 'failed', error, output: answerText() });
     emit(createStreamEvent({ type: StreamEventType.RUN_FAILED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.PRIMARY, payload: { status: 'failed', message: error?.message || String(error) } }));
     throw error;
   }

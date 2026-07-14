@@ -36,6 +36,19 @@ npm run check
 
 至少覆盖本次修改所在层。涉及 Electron IPC、数据库迁移、流式事件、取消操作或本地工具权限时，需要增加针对性的自动测试或可重复 smoke 记录。
 
+Server、Electron、根脚本和示例使用 `npm run lint:node` 检查未定义变量、不可达代码、重复声明和常见控制流错误；Renderer 继续使用 TypeScript 和 ESLint。不要只运行 Renderer 检查。
+
+## 修改品牌和默认能力
+
+只修改根 [`app.config.json`](app.config.json)，然后运行：
+
+```bash
+npm run config:generate
+npm run config:check
+```
+
+生成的 Electron、Server、Renderer 配置和 `renderer/index.html` 需要一起提交，不要手改生成文件。端到端扩展可参考 [项目笔记助手示例](examples/project-notes-assistant/README.md)。
+
 ## 修改数据库
 
 - 同时考虑新数据库和已有数据库。

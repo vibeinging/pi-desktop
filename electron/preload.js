@@ -95,6 +95,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 网络设置需要主进程在启动后端前读取,因此保存到 Electron userData。
   loadNetworkSettings: () => ipcRenderer.invoke('network-settings-load'),
   saveNetworkSettings: (settings) => ipcRenderer.invoke('network-settings-save', normalizeNetworkSettings(settings)),
+  getBackendStatus: () => ipcRenderer.invoke('backend-status'),
+  restartBackend: () => ipcRenderer.invoke('backend-restart'),
+  onBackendState: (callback) => {
+    if (typeof callback !== 'function') throw new TypeError('后端状态回调必须是函数');
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('pi-desktop-backend-state', listener);
+    return () => ipcRenderer.removeListener('pi-desktop-backend-state', listener);
+  },
   // REST 请求经主进程转发到本地后端进程(axios adapter 用,不直连 HTTP)
   apiRequest: (req) => ipcRenderer.invoke('api-request', normalizeRequest(req)),
   // SSE 流式:主进程从本地后端进程拉,逐块经 `pi-desktop-stream:<id>` 推回;onMsg 收 {type:'head'|'data'|'end'|'error'}。

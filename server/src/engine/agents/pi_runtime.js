@@ -235,7 +235,7 @@ export function createPiStreamFn({
     const callerOnPayload = options?.onPayload;
     return baseStreamFn(model, context, {
       ...options,
-      apiKey,
+      apiKey: apiKey || "unused",
       ...(Number(timeoutMs) > 0 ? { timeoutMs: Number(timeoutMs) } : {}),
       ...(cacheRetention && !options?.cacheRetention ? { cacheRetention } : {}),
       onPayload: async (payload, currentModel) => {

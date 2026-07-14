@@ -26,10 +26,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -42,3 +42,16 @@ jobs:
 
       - name: Run quality checks
         run: npm run check
+
+      - name: Build unpacked desktop
+        run: npm run package:dir
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Run packaged startup smoke (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run smoke:package
+
+      - name: Run packaged startup smoke
+        if: runner.os != 'Linux'
+        run: npm run smoke:package

@@ -9,10 +9,18 @@ test('MCP API 不返回明文环境变量，提交掩码时保留原值', async 
   process.env.PI_DB_PATH = join(home, 'local.db');
   const db = await import('../src/db.js');
   const mcp = await import('../src/app/integrations/mcp.js');
+  const credentials = await import('../src/credentials.js');
+  const secrets = new Map();
+  credentials.setCredentialProvider({
+    get: async (ref) => secrets.get(ref) ?? null,
+    set: async (ref, value) => { secrets.set(ref, value); return true; },
+    delete: async (ref) => secrets.delete(ref),
+  });
   const ctx = { query: db.query, queryOne: db.queryOne };
 
   t.after(() => {
     db.closeDb();
+    credentials.setCredentialProvider(null);
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -36,9 +44,10 @@ test('MCP API 不返回明文环境变量，提交掩码时保留原值', async 
   });
 
   const stored = await db.queryOne('SELECT env FROM app_mcp_providers WHERE provider_name=$1', ['secret-provider']);
-  assert.deepEqual(JSON.parse(stored.env), {
-    API_TOKEN: 'real-token',
-    EMPTY_VALUE: '',
-    NEW_VALUE: 'next-token',
-  });
+  const storedEnv = JSON.parse(stored.env);
+  assert.match(storedEnv.API_TOKEN, /^credential:mcp:/);
+  assert.equal(storedEnv.EMPTY_VALUE, '');
+  assert.match(storedEnv.NEW_VALUE, /^credential:mcp:/);
+  assert.equal(secrets.get(storedEnv.API_TOKEN), 'real-token');
+  assert.equal(secrets.get(storedEnv.NEW_VALUE), 'next-token');
 });

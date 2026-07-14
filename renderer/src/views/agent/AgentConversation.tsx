@@ -17,6 +17,7 @@ import {
   IconX
 } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
+import { appConfig } from '@/generated/app-config'
 import { renderSafeMarkdown } from '@/utils/markdownConfig'
 import TurnLocator, {
   sameTurnLocatorMarkers,
@@ -1052,7 +1053,7 @@ export default function AgentConversation({
     if ((b.type === 'confirm' || b.type === 'user_input') && !notifiedBlockIdsRef.current.has(b.id)) {
       notifiedBlockIdsRef.current.add(b.id)
       sendTaskNotification(
-        b.type === 'confirm' ? 'PI Desktop 需要确认' : 'PI Desktop 需要补充信息',
+        b.type === 'confirm' ? `${appConfig.productName} 需要确认` : `${appConfig.productName} 需要补充信息`,
         b.type === 'confirm' ? '当前任务需要你确认后继续执行。' : '当前任务需要你选择或填写信息后继续。',
         'action'
       )
@@ -1177,9 +1178,9 @@ export default function AgentConversation({
     } finally {
       if (runCompleted && !runFailed) completePlan()
       if (runCompleted && !runFailed) {
-        sendTaskNotification('PI Desktop 任务已完成', q.slice(0, 96) || '任务已完成。', 'success')
+        sendTaskNotification(`${appConfig.productName} 任务已完成`, q.slice(0, 96) || '任务已完成。', 'success')
       } else if (runFailed) {
-        sendTaskNotification('PI Desktop 任务失败', q.slice(0, 96) || '任务执行失败。', 'error')
+        sendTaskNotification(`${appConfig.productName} 任务失败`, q.slice(0, 96) || '任务执行失败。', 'error')
       }
       setBusy(false)
       onRunningChange?.(false)
@@ -1275,9 +1276,9 @@ export default function AgentConversation({
     } finally {
       if (runCompleted && !runFailed) completePlan()
       if (runCompleted && !runFailed) {
-        sendTaskNotification('PI Desktop 任务已继续', '补充信息已处理，任务执行完成。', 'success')
+        sendTaskNotification(`${appConfig.productName} 任务已继续`, '补充信息已处理，任务执行完成。', 'success')
       } else if (runFailed) {
-        sendTaskNotification('PI Desktop 任务失败', '补充信息后的任务继续执行失败。', 'error')
+        sendTaskNotification(`${appConfig.productName} 任务失败`, '补充信息后的任务继续执行失败。', 'error')
       }
       setBusy(false)
       onRunningChange?.(false)
@@ -1628,7 +1629,7 @@ export default function AgentConversation({
         <div className={styles.emptyWrap}>
           <div className={styles.hero}>
             <div className={styles.heroPrompt}>
-              <span className={styles.heroAgent}>PI Desktop</span>
+              <span className={styles.heroAgent}>{appConfig.productName}</span>
               <span className={styles.heroCaret}>❯</span>
             </div>
             <div className={styles.heroSub}>处理文件 · 调用工具 · 追踪执行 · 沉淀工作区</div>

@@ -1,5 +1,14 @@
-const { cpSync, existsSync, rmSync } = require('node:fs')
+const { cpSync, existsSync, readdirSync, rmSync } = require('node:fs')
 const { join, resolve } = require('node:path')
+
+function findNativeFiles(directory) {
+  if (!existsSync(directory)) return []
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(directory, entry.name)
+    if (entry.isDirectory()) return findNativeFiles(full)
+    return entry.isFile() && entry.name.endsWith('.node') ? [full] : []
+  })
+}
 
 /**
  * electron-builder 会对 extraResources 继续应用 node_modules 默认过滤规则。
@@ -19,4 +28,9 @@ module.exports = async function afterPack(context) {
 
   const binding = join(target, 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')
   if (!existsSync(binding)) throw new Error(`打包目录缺少 better-sqlite3: ${binding}`)
+
+  const yiTracePackage = join(target, '@yitrace', 'db', 'package.json')
+  if (!existsSync(yiTracePackage)) throw new Error(`打包目录缺少 @yitrace/db: ${yiTracePackage}`)
+  const yiTraceBindings = findNativeFiles(join(target, '@yitrace'))
+  if (yiTraceBindings.length === 0) throw new Error(`打包目录缺少当前平台的 yiTrace 原生模块: ${join(target, '@yitrace')}`)
 }

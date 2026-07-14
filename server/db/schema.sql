@@ -43,6 +43,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_sequence
 CREATE INDEX IF NOT EXISTS idx_session_messages_active_sequence
   ON session_messages(session_id, deleted_at, sequence_number);
 
+CREATE TABLE IF NOT EXISTS agent_transcript_messages (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  sequence_number INTEGER NOT NULL CHECK (sequence_number > 0),
+  message_json TEXT NOT NULL CHECK (json_valid(message_json)),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (session_id, sequence_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_transcript_session_sequence
+  ON agent_transcript_messages(session_id, sequence_number);
+
+CREATE TABLE IF NOT EXISTS agent_transcript_state (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  source_sequence_number INTEGER NOT NULL DEFAULT 0 CHECK (source_sequence_number >= 0),
+  revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS agent_runs (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE RESTRICT,

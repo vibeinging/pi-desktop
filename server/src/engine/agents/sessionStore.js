@@ -1,30 +1,18 @@
 /**
- * agent 会话转写存储 —— JSONL 追加式(对齐本地运行时 SessionManager 形态)。
+ * 会话运行数据只写 SQLite，不再同时维护 JSONL。
  *
- * - 每会话一份 JSONL:~/.pi-desktop/agent-sessions/<sessionId>.jsonl
- *   首行 = session header,之后每行一个 entry。当前 entry 类型:{ type:"message", message:<AgentMessage> }。
- * - 存的是运行时的**原始 AgentMessage**(含 user/assistant/toolCall/toolResult/thinking,无损)。
- * - **追加为主**:每轮(turn_end)把新产生的消息 append 进去 → 崩溃只丢进行中的那一轮。
- * - **compaction 检查点**:整份重写为 header + 压缩后的消息(摘要 user 消息 + 近期消息)。
- * - SQL 的 session_messages 仍服务「会话列表 / 标题 / GUI 渲染」;此处仅服务 LLM 上下文。
- *
- * 与底层运行时的差异:底层是逐事件 append + parentId 树(支持分支 fork);这里逐轮 append、线性(无分支)。
- * 分支需要前端会话树 UI,另作。
+ * `session_messages` 是给人查看的权威历史；`agent_transcript_messages` 是给 Agent 使用、
+ * 可从权威历史恢复的完整上下文投影，两者用途不同。
+ * 老版本 JSONL 只会导入一次，之后改名为 `.migrated`，不再参与日常读写。
  */
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { basename, join } from "node:path";
+import { APP_CONFIG } from "../../generated/app-config.js";
 
-const DIR = join(homedir(), ".pi-desktop", "agent-sessions");
+const DIR = join(homedir(), APP_CONFIG.dataDirName, "agent-sessions");
 const VERSION = 1;
-
-function ensureDir() {
-  try {
-    mkdirSync(DIR, { recursive: true });
-  } catch {
-    /* ignore */
-  }
-}
+const sessionOperationTails = new Map();
 
 function fileFor(sessionId) {
   const safe = String(sessionId || "").replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 200);
@@ -35,60 +23,190 @@ function headerLine(sessionId) {
   return JSON.stringify({ type: "session", version: VERSION, id: String(sessionId) }) + "\n";
 }
 
-/** 读取某会话的原始转写(所有 message entry,按序)。无文件 → null(调用方据此回退到 SQL 重建)。 */
-export function loadTranscript(sessionId) {
-  if (!sessionId) return null;
+function requireStore(db) {
+  if (!db) throw new Error("缺少 SQLite transcript store");
+  return db;
+}
+
+/** 同一会话的 Agent、压缩和删除必须串行，避免上下文互相覆盖。 */
+export async function withSessionLock(sessionId, operation, { signal } = {}) {
+  const key = String(sessionId || "");
+  if (!key) throw new Error("会话不能为空");
+  const previous = sessionOperationTails.get(key) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const tail = previous.catch(() => {}).then(() => gate);
+  sessionOperationTails.set(key, tail);
+  await previous.catch(() => {});
+  if (signal?.aborted) {
+    release();
+    if (sessionOperationTails.get(key) === tail) sessionOperationTails.delete(key);
+    const error = new Error("用户已停止任务");
+    error.name = "AbortError";
+    throw error;
+  }
   try {
-    const f = fileFor(sessionId);
-    if (!existsSync(f)) return null;
-    const lines = readFileSync(f, "utf8").split("\n");
-    const msgs = [];
-    for (const line of lines) {
-      const s = line.trim();
-      if (!s) continue;
-      let e;
-      try {
-        e = JSON.parse(s);
-      } catch {
-        continue; // 跳过损坏行(崩溃可能留下半行)
-      }
-      if (e && e.type === "message" && e.message) msgs.push(e.message);
+    return await operation();
+  } finally {
+    release();
+    if (sessionOperationTails.get(key) === tail) sessionOperationTails.delete(key);
+  }
+}
+
+async function loadFromDb(db, sessionId) {
+  const store = requireStore(db);
+  if (typeof store.loadAgentTranscript === "function") {
+    return await store.loadAgentTranscript(sessionId);
+  }
+  if (typeof store.query !== "function") throw new Error("SQLite transcript store 不支持读取");
+  const rows = await store.query(
+    `SELECT message_json FROM agent_transcript_messages
+      WHERE session_id=$1 ORDER BY sequence_number`,
+    [sessionId],
+  );
+  if (!rows.length) return null;
+  return rows.map((row) => JSON.parse(row.message_json));
+}
+
+function readLegacyTranscript(sessionId) {
+  const path = fileFor(sessionId);
+  if (!existsSync(path)) return null;
+  const messages = [];
+  let invalidLines = 0;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    const value = line.trim();
+    if (!value) continue;
+    let entry;
+    try {
+      entry = JSON.parse(value);
+    } catch {
+      invalidLines += 1;
+      continue;
     }
-    return msgs;
-  } catch {
-    return null;
+    if (entry?.type === "session") continue;
+    if (entry?.type === "message" && entry.message) messages.push(entry.message);
+    else invalidLines += 1;
   }
+  return { path, messages, invalidLines };
 }
 
-/** 追加若干消息(append-only)。文件不存在则先写 header。 */
-export function appendMessages(sessionId, messages) {
-  if (!sessionId || !Array.isArray(messages) || messages.length === 0) return;
+function markLegacyMigrated(path) {
+  let target = `${path}.migrated`;
+  if (existsSync(target)) target = `${target}-${Date.now()}`;
+  renameSync(path, target);
+  return target;
+}
+
+/** 优先读取 SQLite；为空时只导入一次老 JSONL。 */
+export async function loadTranscript(db, sessionId) {
+  if (!sessionId) return null;
+  const current = await loadFromDb(db, sessionId);
+  if (Array.isArray(current)) return current;
+  const legacy = readLegacyTranscript(sessionId);
+  if (!legacy) return null;
+  if (legacy.invalidLines) {
+    console.warn(`[session transcript] ${sessionId} 跳过 ${legacy.invalidLines} 条损坏 JSONL`);
+  }
+  if (legacy.messages.length) await rewriteTranscript(db, sessionId, legacy.messages);
   try {
-    ensureDir();
-    const f = fileFor(sessionId);
-    let out = existsSync(f) ? "" : headerLine(sessionId);
-    for (const m of messages) out += JSON.stringify({ type: "message", message: m }) + "\n";
-    appendFileSync(f, out);
-  } catch {
-    /* 落盘失败不阻断本轮 */
+    markLegacyMigrated(legacy.path);
+  } catch (error) {
+    // SQLite 已经写入成功，旧文件改名失败不能反过来让会话不可用。
+    console.warn(`[session transcript] ${sessionId} 旧 JSONL 改名失败: ${error?.message || error}`);
   }
+  return legacy.messages.length ? legacy.messages : null;
 }
 
-/** 整份重写(compaction 检查点 / 老会话引导):header + message entries。 */
-export function rewriteTranscript(sessionId, messages) {
-  if (!sessionId || !Array.isArray(messages)) return;
-  try {
-    ensureDir();
-    let out = headerLine(sessionId);
-    for (const m of messages) out += JSON.stringify({ type: "message", message: m }) + "\n";
-    writeFileSync(fileFor(sessionId), out);
-  } catch {
-    /* ignore */
+/** 追加若干原始 AgentMessage；失败必须向上抛出，不能静默丢历史。 */
+export async function appendMessages(db, sessionId, messages) {
+  if (!sessionId || !Array.isArray(messages) || messages.length === 0) return { count: 0 };
+  const store = requireStore(db);
+  if (typeof store.appendAgentTranscript !== "function") {
+    throw new Error("SQLite transcript store 不支持原子追加");
   }
+  return await store.appendAgentTranscript({ sessionId, messages });
 }
 
-export function replaceToolResultText(sessionId, toolCallId, text, details = {}) {
-  const messages = loadTranscript(sessionId);
+/** 整份重写，用于压缩检查点、旧会话引导和工具结果修复。 */
+export async function rewriteTranscript(db, sessionId, messages) {
+  if (!sessionId || !Array.isArray(messages)) throw new Error("会话和消息不能为空");
+  const store = requireStore(db);
+  if (typeof store.replaceAgentTranscript !== "function") {
+    throw new Error("SQLite transcript store 不支持原子重写");
+  }
+  return await store.replaceAgentTranscript({ sessionId, messages });
+}
+
+async function loadProjectionState(db, sessionId) {
+  const store = requireStore(db);
+  if (typeof store.getAgentTranscriptState === "function") {
+    return await store.getAgentTranscriptState(sessionId);
+  }
+  if (typeof store.queryOne !== "function") return null;
+  return await store.queryOne(
+    `SELECT session_id,source_sequence_number,revision,updated_at
+       FROM agent_transcript_state WHERE session_id=$1`,
+    [sessionId],
+  );
+}
+
+async function markProjectionSynchronized(db, sessionId, sourceSequenceNumber) {
+  const store = requireStore(db);
+  if (typeof store.markAgentTranscriptSynchronized === "function") {
+    return await store.markAgentTranscriptSynchronized(sessionId, sourceSequenceNumber);
+  }
+  if (typeof store.query !== "function") return null;
+  await store.query(
+    `INSERT INTO agent_transcript_state
+      (session_id,source_sequence_number,revision,updated_at)
+     VALUES ($1,$2,0,CURRENT_TIMESTAMP)
+     ON CONFLICT(session_id) DO UPDATE SET
+       source_sequence_number=excluded.source_sequence_number,
+       updated_at=CURRENT_TIMESTAMP`,
+    [sessionId, Math.max(0, Number(sourceSequenceNumber || 0))],
+  );
+  return null;
+}
+
+/**
+ * `session_messages` 是权威历史，Agent transcript 是可重建投影。
+ * 投影落后时从界面历史重建；升级后首次看到旧 transcript 时先信任并建立基线。
+ */
+export async function ensureTranscriptProjection(db, sessionId, {
+  fallbackMessages = [],
+  sourceSequenceNumber = 0,
+} = {}) {
+  const current = await loadTranscript(db, sessionId);
+  const state = await loadProjectionState(db, sessionId);
+  const sourceSequence = Math.max(0, Number(sourceSequenceNumber || 0));
+  if (state && Number(state.source_sequence_number || 0) === sourceSequence && Array.isArray(current)) {
+    return current;
+  }
+
+  // 兼容升级：旧 JSONL 或 v3 SQLite transcript 首次读到时保留完整工具上下文，
+  // 之后由 source_sequence_number 检查新产生的漂移。
+  if (!state && Array.isArray(current)) {
+    await markProjectionSynchronized(db, sessionId, sourceSequence);
+    return current;
+  }
+
+  const messages = Array.isArray(fallbackMessages) ? fallbackMessages : [];
+  const store = requireStore(db);
+  if (typeof store.replaceAgentTranscriptProjection === "function") {
+    await store.replaceAgentTranscriptProjection({
+      sessionId,
+      messages,
+      sourceSequenceNumber: sourceSequence,
+    });
+  } else {
+    await rewriteTranscript(db, sessionId, messages);
+    await markProjectionSynchronized(db, sessionId, sourceSequence);
+  }
+  return messages;
+}
+
+export async function replaceToolResultText(db, sessionId, toolCallId, text, details = {}) {
+  const messages = await loadTranscript(db, sessionId);
   if (!Array.isArray(messages) || !toolCallId) return false;
   let changed = false;
   const next = messages.map((message) => {
@@ -103,8 +221,25 @@ export function replaceToolResultText(sessionId, toolCallId, text, details = {})
     };
   });
   if (!changed) return false;
-  rewriteTranscript(sessionId, next);
+  await rewriteTranscript(db, sessionId, next);
   return true;
+}
+
+export function deleteLegacyTranscript(sessionId) {
+  const path = fileFor(sessionId);
+  if (existsSync(path)) rmSync(path, { force: true });
+  if (!existsSync(DIR)) return;
+  const prefix = `${basename(path)}.migrated`;
+  for (const name of readdirSync(DIR)) {
+    if (name.startsWith(prefix)) rmSync(join(DIR, name), { force: true });
+  }
+}
+
+export async function exportTranscriptJsonl(db, sessionId) {
+  const messages = await loadTranscript(db, sessionId) || [];
+  return headerLine(sessionId) + messages
+    .map((message) => JSON.stringify({ type: "message", message }))
+    .join("\n") + (messages.length ? "\n" : "");
 }
 
 /**

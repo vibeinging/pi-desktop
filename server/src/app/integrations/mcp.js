@@ -3,6 +3,10 @@
 import { randomUUID } from "crypto";
 import { ApiError } from "../../errors.js";
 import {
+  deleteCredentialRefs,
+  storeMcpCredentials,
+} from "../../credentials.js";
+import {
   discoverMcpProviderTools,
   disposeAllMcpRuntimes,
   disposeProjectMcpRuntimes,
@@ -246,11 +250,12 @@ export async function createAppMcpProvider(ctx, input) {
   const existing = await findAppProviderRow(ctx, providerName);
   if (existing) throw new ApiError("MCP Provider 已存在", 409);
 
+  const securedEnv = await storeMcpCredentials(providerName, normalizeEnv(body.env));
   const values = [
     body.transport || "stdio",
     String(body.command || "").trim(),
     JSON.stringify(normalizeArgs(body.args)),
-    JSON.stringify(normalizeEnv(body.env)),
+    JSON.stringify(securedEnv.values),
     boolFrom(body.is_active, true) ? 1 : 0,
     boolFrom(body.default_enabled ?? body.is_enabled, true) ? 1 : 0,
   ];
@@ -261,8 +266,10 @@ export async function createAppMcpProvider(ctx, input) {
       LIMIT 1`,
     [providerName],
   ).catch(() => null);
-  const row = deleted
-    ? await ctx.queryOne(
+  let row;
+  try {
+    row = deleted
+      ? await ctx.queryOne(
         `UPDATE app_mcp_providers
             SET transport=$2, command=$3, args=$4, env=$5, is_active=$6,
                 default_enabled=$7, tool_cache=NULL, last_discovered_at=NULL,
@@ -270,14 +277,18 @@ export async function createAppMcpProvider(ctx, input) {
           WHERE id=$1
           RETURNING ${APP_MCP_COLS}`,
         [deleted.id, ...values],
-      )
-    : await ctx.queryOne(
+        )
+      : await ctx.queryOne(
         `INSERT INTO app_mcp_providers
            (id, provider_name, transport, command, args, env, is_active, default_enabled, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),now())
          RETURNING ${APP_MCP_COLS}`,
-        [randomUUID(), providerName, ...values],
-      );
+          [randomUUID(), providerName, ...values],
+        );
+  } catch (error) {
+    await deleteCredentialRefs(securedEnv.createdRefs);
+    throw error;
+  }
   await disposeAllMcpRuntimes();
   return { data: mcpRow(row), message: "MCP Provider 创建成功" };
 }
@@ -292,11 +303,14 @@ export async function updateAppMcpProvider(ctx, input) {
   const sets = [];
   const params = [];
   let idx = 1;
+  let securedEnv = null;
+  const currentEnv = normalizeMcpProviderRow(existing)?.env || {};
   if (body.command !== undefined) { sets.push(`command=$${idx++}`); params.push(String(body.command || "").trim()); }
   if (body.args !== undefined) { sets.push(`args=$${idx++}`); params.push(JSON.stringify(normalizeArgs(body.args))); }
   if (body.env !== undefined) {
+    securedEnv = await storeMcpCredentials(existing.provider_name, mergeMaskedEnv(body.env, currentEnv));
     sets.push(`env=$${idx++}`);
-    params.push(JSON.stringify(mergeMaskedEnv(body.env, normalizeMcpProviderRow(existing)?.env)));
+    params.push(JSON.stringify(securedEnv.values));
   }
   if (body.transport !== undefined) { sets.push(`transport=$${idx++}`); params.push(body.transport || "stdio"); }
   if (body.is_active !== undefined) { sets.push(`is_active=$${idx++}`); params.push(boolFrom(body.is_active, true) ? 1 : 0); }
@@ -307,13 +321,23 @@ export async function updateAppMcpProvider(ctx, input) {
   if (!sets.length) return { data: mcpRow(existing), message: "无变更" };
   sets.push(`updated_at=now()`);
   params.push(existing.id);
-  const row = await ctx.queryOne(
-    `UPDATE app_mcp_providers
-        SET ${sets.join(",")}
-      WHERE id=$${idx} AND deleted_at IS NULL
-      RETURNING ${APP_MCP_COLS}`,
-    params,
-  );
+  let row;
+  try {
+    row = await ctx.queryOne(
+      `UPDATE app_mcp_providers
+          SET ${sets.join(",")}
+        WHERE id=$${idx} AND deleted_at IS NULL
+        RETURNING ${APP_MCP_COLS}`,
+      params,
+    );
+  } catch (error) {
+    if (securedEnv) await deleteCredentialRefs(securedEnv.createdRefs);
+    throw error;
+  }
+  if (securedEnv) {
+    const retained = new Set(Object.values(securedEnv.values));
+    await deleteCredentialRefs(Object.values(currentEnv).filter((value) => !retained.has(value)));
+  }
   await disposeAllMcpRuntimes();
   return { data: mcpRow(row), message: "MCP Provider 更新成功" };
 }
@@ -346,6 +370,7 @@ export async function deleteAppMcpProvider(ctx, input) {
       WHERE id=$1 AND deleted_at IS NULL`,
     [row.id],
   );
+  await deleteCredentialRefs(normalizeMcpProviderRow(row)?.env || {});
   await disposeAllMcpRuntimes();
   return { data: { deleted: true, provider_name: row.provider_name }, message: "MCP Provider 已删除" };
 }

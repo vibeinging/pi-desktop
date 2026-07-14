@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -51,6 +52,15 @@ function runNpm(args, options = {}) {
 
 function requirePath(path, hint) {
   if (!existsSync(path)) throw new Error(`${hint}: ${path}`)
+}
+
+function findNativeFiles(directory) {
+  if (!existsSync(directory)) return []
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(directory, entry.name)
+    if (entry.isDirectory()) return findNativeFiles(full)
+    return entry.isFile() && entry.name.endsWith('.node') ? [full] : []
+  })
 }
 
 function copyPiRuntimePackage(name) {
@@ -148,8 +158,13 @@ function rebuildNativeModules() {
 
 function buildAppDirectory() {
   requirePath(electronBuilder, '缺少 electron-builder，请先运行 npm run setup')
-  const args = ['--config', join(ELECTRON_DIR, 'electron-builder.yml')]
-  if (process.argv.includes('--dir')) args.push('--dir')
+  const args = ['--config', join(ELECTRON_DIR, 'electron-builder.config.cjs')]
+  if (process.argv.includes('--dir')) {
+    args.push('--dir')
+    if (process.platform === 'darwin' && !process.env.CSC_LINK) {
+      args.push('-c.mac.identity=null', '-c.mac.hardenedRuntime=false', '-c.mac.notarize=false')
+    }
+  }
   if (process.platform === 'darwin') {
     args.push('--mac')
     args.push(process.arch === 'arm64' ? '--arm64' : '--x64')
@@ -168,5 +183,9 @@ buildAppDirectory()
 const stagedBinding = join(STAGING_SERVER_DIR, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')
 requirePath(stagedBinding, 'staging 中缺少 better-sqlite3 原生模块')
 if (!lstatSync(stagedBinding).isFile()) throw new Error(`better-sqlite3 不是普通文件: ${stagedBinding}`)
+const stagedYiTracePackage = join(STAGING_SERVER_DIR, 'node_modules', '@yitrace', 'db', 'package.json')
+requirePath(stagedYiTracePackage, 'staging 中缺少 @yitrace/db')
+const stagedYiTraceBindings = findNativeFiles(join(STAGING_SERVER_DIR, 'node_modules', '@yitrace'))
+if (stagedYiTraceBindings.length === 0) throw new Error('staging 中缺少当前平台的 yiTrace 原生模块')
 
 console.log('\n[package] 完成，产物位于 release/。源 server/node_modules 未被修改。')

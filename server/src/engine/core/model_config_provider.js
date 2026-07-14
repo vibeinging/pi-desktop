@@ -1,4 +1,5 @@
 import { ModelConfigResolver } from "./llm.js";
+import { resolveCredential } from "../../credentials.js";
 
 function parseExtraConfig(value) {
   if (!value) return {};
@@ -21,11 +22,11 @@ export function createDbModelConfigProvider({ queryOne, notFoundMessage, catchEr
     const strictCategory = requestedCategory === "EMBEDDING";
     const sql = strictCategory
       ? `SELECT id, model_name, api_base, api_key, category, extra_config, api_format, is_enabled FROM llm_models
-          WHERE api_key IS NOT NULL AND is_enabled=1 AND deleted_at IS NULL AND (project_id = $1 OR project_id IS NULL)
+          WHERE is_enabled=1 AND deleted_at IS NULL AND (project_id = $1 OR project_id IS NULL)
             AND category = $2
           ORDER BY (project_id = $1) DESC, created_at DESC LIMIT 1`
       : `SELECT id, model_name, api_base, api_key, category, extra_config, api_format, is_enabled FROM llm_models
-          WHERE api_key IS NOT NULL AND is_enabled=1 AND deleted_at IS NULL AND (project_id = $1 OR project_id IS NULL)
+          WHERE is_enabled=1 AND deleted_at IS NULL AND (project_id = $1 OR project_id IS NULL)
           ORDER BY (category = COALESCE($2,'PRIMARY')) DESC, (project_id = $1) DESC, created_at DESC LIMIT 1`;
     const queryPromise = queryOne(sql, [project_id || null, requestedCategory]);
     const m = catchErrors ? await queryPromise.catch(() => null) : await queryPromise;
@@ -37,7 +38,7 @@ export function createDbModelConfigProvider({ queryOne, notFoundMessage, catchEr
       id: m.id,
       model_name: m.model_name,
       api_base: m.api_base,
-      api_key: m.api_key,
+      api_key: await resolveCredential(m.api_key),
       category: m.category || category || "PRIMARY",
       supports_streaming: true,
       is_enabled: m.is_enabled !== 0 && m.is_enabled !== false,

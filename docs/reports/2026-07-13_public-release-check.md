@@ -1,15 +1,15 @@
 # PI Desktop 公开发布检查
 
-- 更新日期：2026-07-13
+- 更新日期：2026-07-14
 - 检查范围：当前源码、构建与打包输入、测试、GitHub 仓库设置
 
 ## 结论
 
 PI Desktop 当前定位为通用的 pi-agent 桌面应用底座，保留 Electron、React、本地 Server、SQLite、模型配置、Skills、MCP、附件、工具调用和会话历史等基础能力。
 
-项目维护者已为有权许可的内容选择 MIT 许可证，可以作为开源的技术预览供开发者审阅和继续开发。第三方内容继续使用各自的许可证。项目尚未发布稳定安装包，因此仍不应描述为稳定版本。
+项目维护者已为有权许可的内容选择 MIT 许可证，可以作为开源底座供开发者继续开发。第三方内容继续使用各自许可证。Skill 权限、会话双表示一致性、后端恢复、系统凭据、统一版本、发布流程、GitHub 安全和二次开发入口已完成代码实施。
 
-本轮没有发现阻止源码开源的 P0 问题。要成为稳定、可直接复用的桌面底座，仍需先解决 Skill 权限、会话双存储、后端异常恢复、系统凭据存储和跨平台打包验证。
+当前源码和本机 macOS arm64 unpacked 产物已达到公开开发底座要求。macOS x64、Windows、Linux 和正式签名安装包仍需由新 CI/Release workflow 首次运行确认，因此在首个 tag 成功前不应宣称三平台正式安装包已经发布。
 
 ## 已检查
 
@@ -24,15 +24,21 @@ PI Desktop 当前定位为通用的 pi-agent 桌面应用底座，保留 Electro
 - `better-sqlite3` 继续用于项目、会话、消息、模型、Skills、MCP 和 Agent run 持久化。
 - JSON Schema、模型结构化输出、MCP input schema 和 embedding 属于通用 Agent 能力，继续保留。
 - vendored pi 已更新到 `v0.80.6`，来源 commit、本地修改和 MIT 许可证副本已经记录。
-- macOS、Windows 和 Linux CI 会从空 checkout 执行依赖安装和完整检查。
+- macOS、Windows 和 Linux CI 会从空 checkout 执行完整检查、unpacked 打包和真实启动探针。
+- 根 `app.config.json` 统一生成 Electron、Server、Renderer 和启动页配置。
+- 项目笔记助手示例覆盖 Server、Renderer、SQLite、Skill、MCP、取消、权限和测试。
 
 ## GitHub 仓库现状
 
 - `main` 已由 active ruleset 保护：必须通过 PR，必须通过 macOS、Ubuntu、Windows 三项检查，禁止删除和 force-push，并要求线性历史。
+- 远端 `main` 当前仍停在 `fc80ce6`。本轮稳定化工作位于本地 `codex/stable-foundation-hardening`，当前有 46 个已跟踪改动和 33 个未跟踪路径，尚未形成 PR，因此远端还没有验证本轮新代码和新发布流程。
+- 远端 `main` 的三平台源码检查已成功，但当时的 workflow 只执行 `setup` 和 `check`，尚未包含本轮新增的 unpacked 打包与启动探针。
 - 当前远端公开历史没有旧业务内容；两个含旧历史的归档分支只在本地，禁止使用 `git push --all`。
-- GitHub 还没有 Release 和 tag。根 `LICENSE` 合入 `main` 后，GitHub 才会识别仓库的 MIT 许可证。
-- Secret Scanning、Push Protection、Dependabot Security Updates 和 CodeQL 尚未启用。
-- `SECURITY.md` 要求使用 GitHub 私密漏洞报告，但仓库尚未开启该入口，长期安全联系方式也没有填写。
+- GitHub 还没有 Release 和 tag；tag workflow 会先创建 Draft Release。
+- GitHub Actions 当前没有配置发布密钥，macOS 签名、公证和 Windows 签名流程暂时无法真实运行。
+- Secret Scanning、Push Protection、Dependabot alerts、安全更新和私密漏洞报告已经开启。
+- CodeQL default setup 已启用，首次 JavaScript/TypeScript 扫描成功。
+- 非 Provider patterns 和 validity checks 在当前仓库仍显示不可用，未记为已开启。
 
 ## 本地验证
 
@@ -42,34 +48,51 @@ npm run check
 npm run package:dir
 ```
 
-检查范围包括 Server 测试、Renderer 测试、TypeScript、ESLint、Renderer 构建和 Electron 目录打包。
+检查范围包括配置同步、版本同步、Server/Renderer/Electron/示例测试、Renderer TypeScript、三端 ESLint、vendored pi 构建和 Renderer 构建。
 
-本轮还验证了 macOS arm64 目录产物可以启动，后端 IPC ready，SQLite 新库迁移到 `user_version=2`，并通过 Electron smoke。三平台正式安装包尚未验证。
+本轮通过 37 个 Server 测试、15 个 Renderer 测试、10 个 Electron 测试和 2 个扩展示例测试。macOS arm64 目录产物已通过真实 Electron smoke：Renderer 与 preload 加载完成，经主进程 IPC 创建工作区、会话、消息、本地无密钥模型、Prompt Skill 和禁用的 MCP 配置；文本附件经过 Renderer → preload → 主进程 IPC 保存。打包后的 Server 使用真实 pi Agent 调用只在 smoke 期间监听的本机假模型，完成首轮流式对话并保存用户与助手消息。内置 Server 重启后，3 条 SQLite 消息、模型、Skill、MCP 和附件均能恢复；删除后相关数据库记录不可再读取。SQLite 新库迁移到 `user_version=4`。三平台正式安装包尚未验证。
 
-## P1：稳定底座前应先完成
+## 已完成的稳定化工作
 
-1. **让 Skill 权限真正生效。** 界面允许选择 Prompt、Service、Workflow，但运行时只使用 Prompt；`allowed_tools` 目前只写进提示词，没有在工具调用层拦截。稳定前应先隐藏未实现类型，并在执行层强制检查工具白名单。证据：`renderer/src/views/skills/components/SkillEditor.tsx:325`、`server/src/engine/agents/workspace_agent.js:186-193`、`server/src/engine/agents/pi_skill_registry.js:691`。
-2. **处理会话的两套数据源。** SQLite 保存界面消息，JSONL 保存模型上下文；JSONL 写入失败会被忽略，删除会话也没有删除 JSONL。需要明确唯一数据源，或补齐双向校验、导出、恢复、彻底删除和失败测试。证据：`server/src/engine/agents/sessionStore.js:4-63`、`server/src/engine/agents/workspace_agent.js:205`、`server/src/app/session/index.js:110`。
-3. **补后端异常恢复。** 后端进程退出后，当前普通 IPC 请求没有超时，也不会统一失败或自动恢复，界面请求可能一直等待。需要增加 ready 握手、请求超时、退出时统一失败、有限重启和可见的恢复提示。证据：`electron/main.js:611`、`electron/main.js:680`、`electron/main.js:885`。
-4. **把密钥移到系统凭据存储。** 模型 `api_key` 和 MCP `env` 仍明文保存到 SQLite。需要接入 macOS Keychain、Windows Credential Manager、Linux Secret Service，并迁移已有明文数据。证据：`server/db/schema.sql:86`、`server/db/schema.sql:152`。
-5. **统一版本来源。** 根 package 是 `0.0.1`，Electron package 是 `0.1.0`，开发版、打包版、产物名和 tag 可能显示不同版本。需要建立单一版本来源、CHANGELOG、SemVer 和数据库/扩展兼容规则。
-6. **建立跨平台打包和发布链路。** 当前三平台 CI 只运行源码检查，没有生成并启动 Electron 产物；打包配置只验证了未签名的 macOS 目录。需要增加 macOS、Windows、Linux 打包与启动 smoke，并补签名、公证、安装包、校验和、SBOM、GitHub Release 和升级流程。
+1. Skill 只开放真实支持的 Prompt 类型，`use_skill` 和工具白名单在执行层生效。
+2. SQLite 是唯一正式存储；其中保留两种用途不同的会话表示：`session_messages` 是给人查看的权威历史，Agent transcript 是带版本基线、可自动重建的模型投影。旧 JSONL 只导入一次或用于主动导出。
+3. 后端具备 ready、超时、退出失败返回、1/2/5 秒有限重启和 Renderer 状态提示。
+4. 模型与 MCP 密钥使用 Electron `safeStorage`，SQLite 只保存引用，旧明文可迁移。
+5. 四个 package 和三个 lockfile 统一为 `0.1.0`，CI 检查漂移。
+6. 三平台安装包、启动探针、签名、公证、校验和、SBOM 和 Draft Release 流程已写入仓库。
+7. GitHub 安全开关、CodeQL、固定 Actions SHA 和 main ruleset 已确认。
+8. 统一应用配置、完整扩展示例和 Node 静态检查已接入根检查。
 
-## P2：开源体验继续完善
+## 0.1.0 前必须完成
 
-- 为 Server、Electron 主进程、preload 和打包脚本增加静态检查与单测；现有 lint/typecheck 主要覆盖 Renderer。
-- 扩充打包产物 E2E：模型配置、首轮对话、工具确认与取消、Skills、MCP、附件、重启后会话恢复。
-- 开启 GitHub 私密漏洞报告、Secret Scanning、Push Protection、Dependabot Security Updates 和 CodeQL；把 Actions 固定到完整 commit SHA。
-- 升级 Renderer 开发依赖。当前生产依赖审计为 0，但 Renderer 开发依赖仍有 1 个 critical、3 个 high、6 个 moderate，主要来自 Vite、Vitest 和旧 SVG 插件依赖链。
-- 增加统一的应用配置，集中管理产品名、App ID、协议、数据目录、图标、默认提示词和默认工具，降低二次开发改品牌的成本。
-- 增加一个完整扩展示例，覆盖后端用例、路由、Renderer 调用、Skill/MCP、权限、取消、错误和数据库迁移。
-- 按实际需求补 MCP Streamable HTTP、OAuth 和连接权限说明；本地 `stdio` 已能满足当前技术预览。
-- 补 Issue/PR 模板、支持渠道、行为准则、英文入口和各平台构建前置条件；可以把 GitHub 仓库设为 Template repository。
-- 继续减少 Renderer 主包体积，并处理现有 Fast Refresh 警告。
+1. **把当前工作区变成可审查的 PR。** 先按存储与安全、发布流程、文档与开发体验整理提交，再推送当前分支并创建 PR。远端 `main` 目前不包含本轮稳定化代码，不能直接打 tag。
+2. **让新 CI 在三平台真实首跑。** macOS、Windows、Linux 都必须从空 checkout 完成 `setup`、完整检查、unpacked 打包和启动探针；失败后在 PR 内修复，不能用本机 macOS 结果代替。
+3. **继续增加安装包级关键流程回归。** 当前 smoke 已覆盖 Renderer、preload、工作区和会话 API、SQLite 写入、本地无密钥模型、pi Agent 首轮流式对话、Prompt Skill 配置、MCP 配置、文本附件、后端重启恢复和删除。还需要覆盖工具确认与取消、Skill 激活和白名单，以及真正启动 stdio MCP 并调用工具；正式发布前仍需人工使用至少一个真实模型服务回归。
+4. **验证真实安装和卸载。** 分别安装 DMG/ZIP、NSIS、AppImage/deb，检查首次启动、数据目录、协议注册、升级覆盖安装和卸载后数据保留策略。现有 workflow 只启动 unpacked 目录，不等于安装包可用。
+5. **配置签名与公证密钥。** Actions 当前没有发布 secrets。需要配置 Apple 签名证书、App Store Connect API 信息和 Windows 签名证书，先生成 Draft Release，再人工确认后公开。
+6. **文档漂移已修正。** README、规格和发布手册已经同步系统凭据与增强后的打包探针；合并前继续由 `git diff --check` 和人工评审确认。
 
-## 建议顺序
+## 首个版本后优先开发
 
-1. Skill 真权限、会话一致性、后端异常恢复。
-2. 系统凭据存储、统一版本、三平台打包启动 CI。
-3. 正式 Release 流程、安全开关和生产依赖许可证清单。
-4. 集中应用配置、扩展示例、社区文档和性能优化。
+1. **完整备份和恢复。** 目前只能导出 Agent transcript。需要提供 SQLite 一致性备份、项目文件备份、恢复前校验、失败回滚和版本兼容说明；凭据默认不导出，只提示用户重新配置。
+2. **自动升级。** 当前能生成 Release 产物和 blockmap，但没有 `autoUpdater` 或升级界面。建议首个手工安装版本稳定后，再增加检查更新、下载进度、签名校验、安装确认和失败回滚。
+3. **稳定扩展接口。** 当前示例适合 fork 后改源码，但还没有不改核心代码即可安装的扩展协议。需要定义扩展清单、生命周期、权限、配置、数据库迁移、版本兼容和脚手架。
+4. **整组升级 Renderer 工具链。** 生产依赖审计为 0；开发依赖仍有 1 个 critical、3 个 high、6 个 moderate。现有 Vite 8 Dependabot 更新会与 React SWC 插件产生 peer dependency 冲突，应把 Vite、Vitest、React SWC 和 SVG 工具作为一组升级，而不是逐个合并。
+5. **补 UI 和 Electron 端到端测试。** Renderer 当前主要测试流式 reducer、HTML 清洗和翻译覆盖；Electron 主要测试后端进程和凭据。需要覆盖页面导航、设置保存、preload IPC 边界、窗口恢复、深链和真实交互。
+6. **诊断与支持包。** 增加本地结构化日志、日志轮转、隐私清洗、崩溃后的恢复提示和用户主动导出的诊断包；默认不上传遥测。
+7. **性能和界面质量。** 拆分约 1.75 MB 的 Renderer 主 JS 包，处理现有 12 条 Fast Refresh 警告，并补键盘操作、焦点、屏幕阅读器和高缩放测试。
+
+## 可选能力，不阻塞 0.1.0
+
+- MCP Streamable HTTP、OAuth 和远程连接权限。
+- Service Skill、Workflow Skill；需要先定义真实执行协议，不能只恢复界面选项。
+- Windows arm64、Linux arm64 和更多发行版安装包。
+- 扩展市场、云同步、团队账号和远程数据库。
+
+## 建议执行顺序
+
+1. 冻结 0.1.0 范围，整理当前工作区并创建 PR。
+2. 修复新三平台 CI，完成安装包关键流程回归。
+3. 配置签名密钥，生成并人工验证 0.1.0 Draft Release。
+4. 发布后先做备份恢复、自动升级和稳定扩展接口。
+5. 再处理工具链升级、包体积、更多 MCP 与 Skill 类型。

@@ -1,0 +1,38 @@
+// 由 scripts/generate-app-config.mjs 生成，请勿手改。
+module.exports = Object.freeze({
+  "productName": "PI Desktop",
+  "shortName": "pi-desktop",
+  "description": "A local-first Electron desktop foundation built on earendil-works/pi.",
+  "appId": "io.github.vibeinging.pi-desktop",
+  "urlProtocol": "pi-desktop",
+  "localFileScheme": "pi-desktop-file",
+  "dataDirName": ".pi-desktop",
+  "userDataDirName": "pi-desktop",
+  "defaultLocale": "zh",
+  "defaultTheme": "pi-purple",
+  "icons": {
+    "png": "electron/icons/icon.png",
+    "mac": "electron/icons/icon.icns",
+    "windows": "electron/icons/icon.ico",
+    "linux": "electron/icons"
+  },
+  "defaultSystemPrompt": "你是 PI Desktop 中的通用 Agent。\n使用简洁、准确的中文帮助用户完成任务。\n你可以使用 read、grep、ls、find 读取工作区，使用 write、edit 修改文件，使用 bash 执行命令。\n需要多步处理时，使用 update_plan 向用户展示进度。\n只使用当前实际提供的工具，不虚构未配置的能力。",
+  "defaultTools": [
+    "update_plan",
+    "use_skill",
+    "read",
+    "grep",
+    "ls",
+    "find",
+    "write",
+    "edit",
+    "bash",
+    "mcp_*"
+  ],
+  "links": {
+    "repository": "https://github.com/vibeinging/pi-desktop",
+    "documentation": "https://github.com/vibeinging/pi-desktop#readme",
+    "issues": "https://github.com/vibeinging/pi-desktop/issues",
+    "security": "https://github.com/vibeinging/pi-desktop/security/advisories/new"
+  }
+});
