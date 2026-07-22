@@ -16,7 +16,7 @@
     "dev:electron": "node scripts/native-npm.mjs --prefix electron run dev",
     "typecheck": "node scripts/native-npm.mjs --prefix renderer run typecheck",
     "test:renderer": "node scripts/native-npm.mjs --prefix renderer test",
-    "test:server": "node --test server/src/engine/modules/miniapp_compiler.test.js server/src/engine/modules/module_registry.test.js server/src/engine/modules/module_validator.test.js server/src/engine/modules/skill_product.test.js server/src/engine/agents/product_tool_catalog.ui_modules.test.js",
+    "test:server": "node --test server/src/engine/modules/miniapp_compiler.test.js server/src/engine/modules/module_registry.test.js server/src/engine/modules/module_validator.test.js server/src/engine/modules/skill_product.test.js server/src/engine/agents/product_tool_catalog.ui_modules.test.js server/src/engine/datasources/unstructured/document_loaders.test.js",
     "ensure:server-pi": "node scripts/native-npm.mjs --prefix server run ensure:pi",
     "build:renderer": "npm run ensure:server-pi && node scripts/native-npm.mjs --prefix renderer run build:desktop",
     "build:server-pi": "node scripts/native-npm.mjs --prefix server run build:pi",

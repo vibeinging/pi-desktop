@@ -84,6 +84,9 @@ const acceptedFileTypes = {
   'image/gif': ['.gif']
 }
 const acceptedExtensionSet = new Set(acceptedExtensions)
+let uploadUidSequence = 0
+
+const createUploadUid = () => globalThis.crypto?.randomUUID?.() || `upload-${Date.now()}-${uploadUidSequence++}`
 
 const getFileExtension = (fileName: string) => {
   const normalized = fileName.toLowerCase()
@@ -753,7 +756,7 @@ export default function DocumentManagement({ dataSourceId }: DocumentManagementP
   // 读取单个本地文件路径（桌面端不复制文件内容）
   const uploadSingleFile = async (file: File) => {
     const item: UploadFileItem = {
-      uid: ((file as any).uid || Date.now() + Math.random()).toString(),
+      uid: String((file as any).uid || createUploadUid()),
       name: file.name,
       size: file.size || 0,
       progress: 1,
@@ -852,7 +855,7 @@ export default function DocumentManagement({ dataSourceId }: DocumentManagementP
         .map((filePath) => {
           const name = getFileNameFromPath(filePath)
           return {
-            uid: `${Date.now()}-${Math.random()}`,
+            uid: createUploadUid(),
             name,
             size: 0,
             progress: 100,

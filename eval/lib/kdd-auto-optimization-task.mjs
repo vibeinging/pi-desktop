@@ -42,7 +42,7 @@ function rowsFromColumns(columns) {
 }
 
 function markdownCell(value) {
-  return String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
 function expectedAnswerMarkdown(headers, rows) {

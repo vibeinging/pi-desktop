@@ -21,3 +21,22 @@ test('JSON is converted to a Markdown code block without a model', async () => {
 test('image formats are accepted for secondary-model OCR', () => {
   for (const ext of ['png', 'jpg', 'jpeg', 'webp', 'gif']) assert.ok(SUPPORTED_EXTS.includes(ext));
 });
+
+test('HTML conversion removes script and style content without relying on filtering regexes', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'yiw-html-'));
+  try {
+    const path = join(dir, 'sample.html');
+    await writeFile(path, [
+      '<h1 title="1 > 0">YiW</h1>',
+      '<script>first<script>nested</script>second</script >',
+      '<style>body { display: none }</style >',
+      '<p>Safe &amp; visible</p>',
+    ].join(''), 'utf8');
+    const markdown = await loadDocument(path, 'html');
+    assert.match(markdown, /^# YiW/);
+    assert.match(markdown, /Safe & visible/);
+    assert.doesNotMatch(markdown, /first|nested|second|display/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

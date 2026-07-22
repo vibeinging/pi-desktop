@@ -42,8 +42,8 @@ function hasExactIdentifierPredicate(sql) {
   const where = extractWhereClause(sql);
   if (!where) return false;
   return EXACT_IDENTIFIER_COLUMNS.some((column) => {
-    const quotedLiteral = new RegExp(`(?:^|[^\\w.])(?:[\\w]+\.)?["\`]?${column}["\`]?\\s*=\\s*(?:'[^']+'|"[^"]+")`, 'i');
-    const inLiteral = new RegExp(`(?:^|[^\\w.])(?:[\\w]+\.)?["\`]?${column}["\`]?\\s+IN\\s*\\([^)]*(?:'[^']+'|"[^"]+")[^)]*\\)`, 'i');
+    const quotedLiteral = new RegExp(`(?:^|[^\\w.])(?:[\\w]+\\.)?["\`]?${column}["\`]?\\s*=\\s*(?:'[^']+'|"[^"]+")`, 'i');
+    const inLiteral = new RegExp(`(?:^|[^\\w.])(?:[\\w]+\\.)?["\`]?${column}["\`]?\\s+IN\\s*\\([^)]*(?:'[^']+'|"[^"]+")[^)]*\\)`, 'i');
     return quotedLiteral.test(where) || inLiteral.test(where);
   });
 }

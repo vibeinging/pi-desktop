@@ -181,7 +181,7 @@ export async function openSession({ port = 9333 } = {}) {
       }
     }
     const env = createEvalEnv(rendererUrl);
-    console.info(`[eval] 启动 Electron: mode=${env.YIW_EVAL_MODE || 'normal'} HOME=${env.HOME || process.env.HOME || ''} DB=${env.DB_SQLITE_PATH || '(default ~/.yiw/local.db)'}`);
+    console.info(`[eval] 启动 Electron: mode=${env.YIW_EVAL_MODE || 'normal'} db=${env.DB_SQLITE_PATH ? 'custom' : 'default'}`);
     child = spawn('./node_modules/.bin/electron', ['.', `--remote-debugging-port=${port}`], {
       cwd: ELECTRON_DIR,
       env,

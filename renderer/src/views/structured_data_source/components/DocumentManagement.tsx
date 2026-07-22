@@ -65,6 +65,9 @@ const acceptedFileTypes = {
   'application/x-ndjson': ['.jsonl']
 }
 const acceptedExtensionSet = new Set(acceptedExtensions)
+let uploadUidSequence = 0
+
+const createUploadUid = () => globalThis.crypto?.randomUUID?.() || `upload-${Date.now()}-${uploadUidSequence++}`
 
 const getFileExtension = (fileName: string) => {
   const normalized = fileName.toLowerCase()
@@ -563,7 +566,7 @@ export default function DocumentManagement({ dataSourceId, onDocumentsProcessed 
       form.append('data_source_id', dataSourceIdRef.current)
       form.append('files', file)
 
-      const uid = ((file as any).uid || Date.now() + Math.random()).toString()
+      const uid = String((file as any).uid || createUploadUid())
       const item: UploadedItem = {
         uid,
         name: file.name,
@@ -665,7 +668,7 @@ export default function DocumentManagement({ dataSourceId, onDocumentsProcessed 
         .map((filePath) => {
           const name = getFileNameFromPath(filePath)
           return {
-            uid: `${Date.now()}-${Math.random()}`,
+            uid: createUploadUid(),
             name,
             size: 0,
             progress: 100,

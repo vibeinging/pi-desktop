@@ -23,7 +23,7 @@ const marked = new Marked(
 marked.setOptions({ breaks: true, gfm: true });
 
 const purifier = typeof window === 'undefined' ? null : createDOMPurify(window);
-const SAFE_URI_PATTERN = /^(?:(?:https?|mailto|tel|blob|yiw-file):|data:image\/(?:png|gif|jpe?g|webp|svg\+xml);|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i;
+const SAFE_URI_PATTERN = /^(?:(?:https?|mailto|tel|blob|yiw-file):|data:image\/(?:png|gif|jpe?g|webp|svg\+xml);|[^a-z]|[a-z+.\x2d]+(?:[^a-z+.\x2d:]|$))/i;
 
 const escapeHtml = (value: string) => value
   .replace(/&/g, '&amp;')

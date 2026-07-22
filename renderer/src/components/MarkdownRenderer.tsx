@@ -10,7 +10,7 @@ import {
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import mermaid from 'mermaid'
-import marked, { extractToc } from '@/utils/markdownConfig'
+import marked, { extractToc, sanitizeMarkdownHtml } from '@/utils/markdownConfig'
 import styles from './MarkdownRenderer.module.scss'
 // 全局样式（teleport→body 的放大模态框，因 portal 到 body，类名保持非 module）
 import './MarkdownRenderer.scss'
@@ -52,7 +52,7 @@ const initMermaid = (theme: string) => {
       labelTextColor: isDark ? '#ffffff' : '#0f172a',
       cycleTextColor: isDark ? '#ffffff' : '#0f172a',
     } as any,
-    securityLevel: 'loose',
+    securityLevel: 'strict',
   })
 }
 
@@ -234,12 +234,16 @@ function MarkdownRenderer(
       if (!pre) continue
 
       try {
-        const id = `mermaid-${Math.random().toString(36).substr(2, 9)}`
+        const id = `mermaid-${globalThis.crypto.randomUUID()}`
         const { svg } = await mermaid.render(id, code)
+        const safeSvg = sanitizeMarkdownHtml(svg)
 
         const container = document.createElement('div')
         container.className = 'mermaid-diagram'
-        container.innerHTML = svg
+        const svgDocument = new DOMParser().parseFromString(safeSvg, 'image/svg+xml')
+        const svgElement = svgDocument.documentElement
+        if (svgElement.nodeName.toLowerCase() !== 'svg') throw new Error('Mermaid 未返回有效 SVG')
+        container.appendChild(document.importNode(svgElement, true))
 
         // 添加放大镜按钮
         const zoomButton = document.createElement('button')
@@ -254,7 +258,7 @@ function MarkdownRenderer(
         zoomButton.addEventListener('click', (e) => {
           e.preventDefault()
           e.stopPropagation()
-          setZoomedSvg(svg)
+          setZoomedSvg(safeSvg)
         })
 
         container.appendChild(zoomButton)

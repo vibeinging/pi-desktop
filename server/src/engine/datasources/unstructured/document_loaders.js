@@ -10,34 +10,101 @@ import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { chat } from '../../core/llm.js';
 
-function stripHtml(html) {
-  return String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-    .replace(/[ \t]+/g, ' ')
+function findTagEnd(source, start) {
+  let quote = '';
+  for (let index = start + 1; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+    else if (char === '>') return index;
+  }
+  return -1;
+}
+
+function readTag(rawTag) {
+  const trimmed = rawTag.trim();
+  const closing = trimmed.startsWith('/');
+  const body = closing ? trimmed.slice(1).trimStart() : trimmed;
+  const name = /^[a-z][a-z0-9:-]*/i.exec(body)?.[0]?.toLowerCase() || '';
+  return { closing, name };
+}
+
+function decodeHtmlEntities(value) {
+  const entities = {
+    '&nbsp;': ' ',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&amp;': '&',
+    '&quot;': '"',
+    '&#39;': "'",
+  };
+  return value.replace(/&(nbsp|lt|gt|amp|quot|#39);/gi, (entity) => entities[entity.toLowerCase()] || entity);
+}
+
+function convertHtmlToText(html, { markdown = false } = {}) {
+  const source = String(html || '');
+  const output = [];
+  let ignoredTag = '';
+  let ignoredDepth = 0;
+
+  for (let index = 0; index < source.length;) {
+    if (source.startsWith('<!--', index)) {
+      const commentEnd = source.indexOf('-->', index + 4);
+      index = commentEnd < 0 ? source.length : commentEnd + 3;
+      continue;
+    }
+    if (source[index] !== '<') {
+      if (!ignoredTag) output.push(source[index]);
+      index += 1;
+      continue;
+    }
+
+    const tagEnd = findTagEnd(source, index);
+    if (tagEnd < 0) {
+      if (!ignoredTag) output.push(source.slice(index));
+      break;
+    }
+    const tag = readTag(source.slice(index + 1, tagEnd));
+    index = tagEnd + 1;
+    if (!tag.name) continue;
+
+    if (ignoredTag) {
+      if (!tag.closing && tag.name === ignoredTag) ignoredDepth += 1;
+      if (tag.closing && tag.name === ignoredTag) {
+        ignoredDepth -= 1;
+        if (ignoredDepth === 0) ignoredTag = '';
+      }
+      continue;
+    }
+    if (!tag.closing && (tag.name === 'script' || tag.name === 'style')) {
+      ignoredTag = tag.name;
+      ignoredDepth = 1;
+      continue;
+    }
+
+    if (tag.name === 'br') output.push('\n');
+    else if (!tag.closing && markdown && /^h[1-3]$/.test(tag.name)) output.push(`\n${'#'.repeat(Number(tag.name[1]))} `);
+    else if (!tag.closing && markdown && tag.name === 'li') output.push('\n- ');
+    else if (tag.closing && ['h1', 'h2', 'h3', 'p', 'div', 'section', 'article', 'tr'].includes(tag.name)) output.push('\n\n');
+    else if (!markdown && ['p', 'div', 'section', 'article', 'tr', 'li'].includes(tag.name)) output.push('\n');
+  }
+
+  return decodeHtmlEntities(output.join(''))
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
+function stripHtml(html) {
+  return convertHtmlToText(html);
+}
+
 function htmlToMarkdown(html) {
-  return String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '# $1\n\n')
-    .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '## $1\n\n')
-    .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '### $1\n\n')
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|section|article|tr)>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  return convertHtmlToText(html, { markdown: true });
 }
 
 async function loadPdf(path) {

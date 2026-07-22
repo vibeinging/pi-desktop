@@ -35,6 +35,8 @@ YiW 以 `vibeinging/yiWork` 作为公开目标仓库。目标仓库已经公开�
 - KDD 数据集路径改为 `YIW_KDD_ROOT` 或仓库内可选目录，不再包含个人机器路径。
 - 增加 `.env` 和可选向量扩展二进制的忽略规则。
 - 将锁文件中的 cnpm 镜像地址统一改为官方 npm registry，保证公开 CI 可以从干净环境安装。
+- 恢复 macOS、Ubuntu、Windows 三平台必需检查，并修复 Windows 下 npm 启动和 SCSS 路径问题。
+- 根据首次 CodeQL 扫描，收紧 Mermaid 安全级别，改用结构化 HTML 文本提取，并停止输出本机目录和数据库路径。
 
 ## 后续规则
 
