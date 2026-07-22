@@ -38,13 +38,19 @@ function resolveNativeNode() {
 const nativeNode = resolveNativeNode()
 const binDir = dirname(nativeNode)
 const npmCommand = join(binDir, process.platform === 'win32' ? 'npm.cmd' : 'npm')
+const npmCli = join(binDir, 'node_modules', 'npm', 'bin', 'npm-cli.js')
+const useNpmCli = process.platform === 'win32'
 
-if (!existsSync(npmCommand)) {
+if (!existsSync(useNpmCli ? npmCli : npmCommand)) {
   console.error(`[native-npm] 找不到与 ${nativeNode} 配套的 npm`)
   process.exit(1)
 }
 
-const child = spawn(npmCommand, process.argv.slice(2), {
+// Node.js 26 在 Windows 上不能直接 spawn `.cmd` 文件，会返回 EINVAL。
+// 通过同一套 Node 运行 npm-cli.js，也能继续保证 Node 与 npm 架构一致。
+const childCommand = useNpmCli ? nativeNode : npmCommand
+const childArgs = useNpmCli ? [npmCli, ...process.argv.slice(2)] : process.argv.slice(2)
+const child = spawn(childCommand, childArgs, {
   stdio: 'inherit',
   env: {
     ...process.env,
