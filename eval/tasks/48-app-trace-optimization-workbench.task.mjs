@@ -27,10 +27,7 @@ async function apiJson(driver, method, url, body) {
 }
 
 async function waitBodyText(driver, text, { timeout = 10000 } = {}) {
-  await driver.ui.waitUntil(
-    `() => document.body?.innerText?.includes(${JSON.stringify(text)})`,
-    { timeout, label: `页面文本 ${text}` },
-  );
+  await driver.ui.waitForText(text, { selector: 'body', timeout });
 }
 
 export default {

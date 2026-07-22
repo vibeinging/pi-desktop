@@ -46,15 +46,30 @@ async function connect() {
   await new Promise((res, rej) => { ws.addEventListener('open', res); ws.addEventListener('error', rej); });
   const cmd = (method, params) => new Promise((res, rej) => { const i = ++id; pending.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params })); });
   await cmd('Runtime.enable', {});
+  const globalResult = await cmd('Runtime.evaluate', { expression: 'globalThis' });
+  const globalObjectId = globalResult.result.objectId;
+  const valueOf = (result) => {
+    if (result.exceptionDetails) throw new Error('渲染层异常: ' + String(result.exceptionDetails.exception?.description || JSON.stringify(result.exceptionDetails)).slice(0, 300));
+    return result.result.value;
+  };
   const evalJs = async (expr) => {
     const r = await cmd('Runtime.evaluate', { expression: `(async()=>{${expr}})()`, awaitPromise: true, returnByValue: true });
-    if (r.exceptionDetails) throw new Error('渲染层异常: ' + String(r.exceptionDetails.exception?.description || JSON.stringify(r.exceptionDetails)).slice(0, 300));
-    return r.result.value;
+    return valueOf(r);
+  };
+  const callPage = async (functionDeclaration, args = []) => {
+    const r = await cmd('Runtime.callFunctionOn', {
+      objectId: globalObjectId,
+      functionDeclaration,
+      arguments: args.map((value) => ({ value })),
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    return valueOf(r);
   };
   // 等前端 electronAPI 就绪
   const d2 = Date.now() + 20000;
   while (Date.now() < d2) { try { if (await evalJs(`return !!(window.electronAPI&&window.electronAPI.apiRequest)`)) break; } catch { /* loading */ } await sleep(300); }
-  return { evalJs, close: () => ws.close() };
+  return { evalJs, callPage, close: () => ws.close() };
 }
 
 // ── 迷你测试框架 ──
@@ -68,8 +83,25 @@ function assert(cond, msg) { if (!cond) throw new Error(msg || 'assert failed');
 // ── 跑 ──
 await ensureApp();
 const s = await connect();
-const api = (req) => s.evalJs(`return await window.electronAPI.apiRequest(${JSON.stringify(req)})`);
-const stream = (req) => s.evalJs(`return await new Promise((resolve)=>{let c='';let st=0;window.electronAPI.streamStart(${JSON.stringify(req)},(m)=>{if(m.type==='head')st=m.status;else if(m.type==='data')c+=m.chunk;else if(m.type==='end')resolve({status:st,body:c});else if(m.type==='error')resolve({status:st,error:m.error});});})`);
+const api = (req) => s.callPage(
+  'async function (request) { return await this.electronAPI.apiRequest(request); }',
+  [req],
+);
+const stream = (req) => s.callPage(
+  `async function (request) {
+    return await new Promise((resolve) => {
+      let content = '';
+      let status = 0;
+      this.electronAPI.streamStart(request, (message) => {
+        if (message.type === 'head') status = message.status;
+        else if (message.type === 'data') content += message.chunk;
+        else if (message.type === 'end') resolve({ status, body: content });
+        else if (message.type === 'error') resolve({ status, error: message.error });
+      });
+    });
+  }`,
+  [req],
+);
 
 console.log('\n=== Electron e2e(CDP · 真渲染层 · 全走进程通道)===');
 let token = '';
