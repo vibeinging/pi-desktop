@@ -2,8 +2,8 @@
 // 纯展示 + 搜索;命中项由调用方决定如何插入。供「+ 菜单」与输入框内联触发(@ # /)共用。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { IconFile, IconMessage, IconSearch } from '@tabler/icons-react'
-import { listAgentFiles, type FileNode } from '@/api/agent'
-import styles from './agent.module.scss'
+import { listAgentFiles, type FileNode } from '@/api/yiw'
+import styles from './yiw.module.scss'
 
 export type PickMode = 'file' | 'conv'
 

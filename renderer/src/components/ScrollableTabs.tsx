@@ -1,6 +1,8 @@
-// ScrollableTabs —— 可横向滚动的 Tabs 包装器。
+// ScrollableTabs —— 可横向滚动的 Tabs 包装器（源：components/ScrollableTabs.vue）
 // 在切换 / 点击 tab 时，把当前激活的 tab 平滑滚动到滚动容器中心。
-// 激活项使用 [data-active]，横向滚动容器使用 Mantine ScrollArea。
+// TODO(migration): 源组件基于 el-tabs（.el-tabs__item.is-active / .el-tabs__nav-scroll）。
+//   Mantine Tabs 的 DOM 结构不同：激活项为 [data-active]，横向滚动容器为 .mantine-Tabs-list 的父级 ScrollArea。
+//   这里改用 Mantine Tabs + ScrollArea，并按 Mantine 的选择器定位激活 tab 实现「滚动到中心」，行为对齐源逻辑。
 import {
   forwardRef,
   useCallback,
@@ -12,22 +14,24 @@ import {
 import { ScrollArea, Tabs } from '@mantine/core'
 import styles from './ScrollableTabs.module.scss'
 
+// defineProps → interface
 interface ScrollableTabsProps {
-  // 当前选中的标签值
+  // v-model="modelValue"
   modelValue?: string | number
-  // 标签页外观类型
+  // el-tabs type（'border-card' | 'card' | ''）
   type?: string
   // 透传到 Tabs 根节点的 class
   tabsClass?: string
   // 自定义选择器，用于定位 tabs 滚动容器（支持多实例场景）
   navScrollSelector?: string
-  // 选中值变化和标签点击回调
+  // defineEmits(['update:modelValue', 'tab-click'])
   onUpdateModelValue?: (value: string) => void
   onTabClick?: (value: string, event: React.MouseEvent) => void
-  // Tabs.List / Tabs.Tab / Tabs.Panel 等子节点
+  // 默认插槽：Tabs.List / Tabs.Tab / Tabs.Panel 等
   children?: ReactNode
 }
 
+// defineExpose({ scrollActiveTabToCenter }) → forwardRef + useImperativeHandle
 export interface ScrollableTabsHandle {
   scrollActiveTabToCenter: () => void
 }
@@ -45,14 +49,14 @@ const ScrollableTabs = forwardRef<ScrollableTabsHandle, ScrollableTabsProps>(
     },
     ref
   ) {
-    // 指向 Tabs 根 DOM
+    // ref="tabsRef" —— 指向 Tabs 根 DOM
     const tabsRef = useRef<HTMLDivElement>(null)
 
     /**
      * 将 active tab 滚动到中心位置
      */
     const scrollActiveTabToCenter = useCallback(() => {
-      // 等待 DOM/激活态更新后再计算
+      // nextTick → requestAnimationFrame，等待 DOM/激活态更新后再计算
       requestAnimationFrame(() => {
         // 获取 tabs 容器元素
         const tabsEl = tabsRef.current
@@ -93,7 +97,7 @@ const ScrollableTabs = forwardRef<ScrollableTabsHandle, ScrollableTabsProps>(
       scrollActiveTabToCenter()
     }
 
-    // 处理标签点击事件，并保留原始事件对象
+    // 处理 tab 点击事件，透传 tab-click（保留事件对象）
     const handleTabClick = (value: string, event: React.MouseEvent) => {
       onTabClick?.(value, event)
     }
@@ -122,7 +126,7 @@ const ScrollableTabs = forwardRef<ScrollableTabsHandle, ScrollableTabsProps>(
         className={[styles.scrollableTabs, tabsClass].filter(Boolean).join(' ')}
         data-tabs-type={type}
         onClick={(e) => {
-          // 捕获标签点击并通知外部
+          // 捕获 tab 点击，透传 tab-click（对应源 @tab-click emit）
           // Mantine tab 不带 data-value，从 aria-controls（panel id，形如 *-panel-{value}）反解 value
           const tabEl = (e.target as HTMLElement).closest<HTMLElement>(
             '[role="tab"]'

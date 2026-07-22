@@ -1,4 +1,4 @@
-// 简单的事件总线，用于组件间通信。
+// 简单的事件总线，用于组件间通信(对齐原 utils/eventBus.js)
 type Callback = (...args: any[]) => void
 
 class EventBus {
@@ -29,6 +29,7 @@ export const eventBus = new EventBus()
 
 export const EVENT_TYPES = {
   REFRESH_HISTORY: 'refresh_history',
-  NEW_SESSION_CREATED: 'new_session_created',
+  NEW_session_CREATED: 'new_session_created',
+  QUERY_COMPLETED: 'query_completed',
   LOCATE_AGENT_QUESTION: 'locate_agent_question'
 } as const

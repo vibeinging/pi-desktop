@@ -43,11 +43,11 @@
 
     &:hover,
     &.hover {
-      background: rgba(99, 102, 241, 0.08) !important;
+      background: rgba(23, 72, 62, 0.08) !important;
     }
 
     &.selected {
-      background: rgba(99, 102, 241, 0.12) !important;
+      background: rgba(23, 72, 62, 0.12) !important;
     }
   }
 
@@ -109,8 +109,8 @@
 }
 
 /* 无背景透明标签页 */
-/* 使用方式: el-tabs 添加 class="app-tabs-transparent" */
-.app-tabs-transparent {
+/* 使用方式: el-tabs 添加 class="ad-tabs-transparent" */
+.ad-tabs-transparent {
   &.el-tabs {
     --el-tabs-header-height: 48px;
   }
@@ -124,23 +124,23 @@
     font-size: 14px;
 
     &.is-active {
-      color: #6366f1;
+      color: #17483e;
       font-weight: 500;
     }
 
     &:hover {
-      color: #6366f1;
+      color: #17483e;
     }
   }
 
   .el-tabs__active-bar {
-    background-color: #6366f1;
+    background-color: #17483e;
   }
 }
 
 /* 卡片式标签页 */
-/* 使用方式: el-tabs 添加 class="app-tabs-card" */
-.app-tabs-card {
+/* 使用方式: el-tabs 添加 class="ad-tabs-card" */
+.ad-tabs-card {
   .el-tabs__header {
     margin: 0;
     border: none;
@@ -165,12 +165,12 @@
 
     &.is-active {
       background: #ffffff;
-      color: #6366f1;
+      color: #17483e;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     }
 
     &:hover:not(.is-active) {
-      color: #6366f1;
+      color: #17483e;
     }
   }
 }
@@ -189,19 +189,19 @@
 
 /* 主色调按钮 */
 .el-button--primary {
-  --el-button-bg-color: #6366f1;
-  --el-button-border-color: #6366f1;
-  --el-button-hover-bg-color: #4f46e5;
-  --el-button-hover-border-color: #4f46e5;
-  --el-button-active-bg-color: #4338ca;
-  --el-button-active-border-color: #4338ca;
+  --el-button-bg-color: #17483e;
+  --el-button-border-color: #17483e;
+  --el-button-hover-bg-color: #22594c;
+  --el-button-hover-border-color: #22594c;
+  --el-button-active-bg-color: #17483e;
+  --el-button-active-border-color: #17483e;
 }
 
 /* 链接按钮统一颜色 */
 .el-button--text,
 .el-button.is-link {
-  --el-button-text-color: #6366f1;
-  --el-button-hover-text-color: #4f46e5;
+  --el-button-text-color: #17483e;
+  --el-button-hover-text-color: #22594c;
 }
 
 /* ----------------------------------------
@@ -209,8 +209,8 @@
    ---------------------------------------- */
 
 /* 简洁表格样式 */
-/* 使用方式: el-table 添加 class="app-table-simple" */
-.app-table-simple {
+/* 使用方式: el-table 添加 class="ad-table-simple" */
+.ad-table-simple {
   --el-table-border-color: #f1f5f9;
   --el-table-header-bg-color: #f8fafc;
   --el-table-row-hover-bg-color: #f8fafc;
@@ -241,8 +241,8 @@
    ---------------------------------------- */
 
 /* 紧凑表单 */
-/* 使用方式: el-form 添加 class="app-form-compact" */
-.app-form-compact {
+/* 使用方式: el-form 添加 class="ad-form-compact" */
+.ad-form-compact {
   .el-form-item {
     margin-bottom: 16px;
 
@@ -262,8 +262,8 @@
    ---------------------------------------- */
 
 /* 现代风格输入框 */
-/* 使用方式: el-input 添加 class="app-input-modern" */
-.app-input-modern {
+/* 使用方式: el-input 添加 class="ad-input-modern" */
+.ad-input-modern {
   .el-input__wrapper {
     border-radius: 8px;
     box-shadow: 0 0 0 1px #e2e8f0;
@@ -274,7 +274,7 @@
     }
 
     &.is-focus {
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+      box-shadow: 0 0 0 2px rgba(23, 72, 62, 0.2);
     }
   }
 }
@@ -306,7 +306,7 @@
    ---------------------------------------- */
 
 /* 使 dialog 内容自适应高度 */
-.app-dialog-flex {
+.ad-dialog-flex {
   .el-dialog__body {
     display: flex;
     flex-direction: column;
@@ -320,7 +320,7 @@
    ---------------------------------------- */
 
 /* 紧凑描述列表 */
-.app-descriptions-compact {
+.ad-descriptions-compact {
   .el-descriptions__label {
     width: 100px;
     color: #64748b;

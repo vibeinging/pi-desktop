@@ -1,5 +1,4 @@
 import type { ArtifactKind } from '@/layout/workstation/Workstation'
-import { appConfig } from '@/generated/app-config'
 
 export const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'] as const
 export const CODE_EXTENSIONS = ['.py', '.js', '.ts', '.sql', '.sh', '.json'] as const
@@ -32,13 +31,13 @@ export function imageSrcFromPath(raw: string) {
   const value = raw.trim()
   if (/^https?:\/\//i.test(value) || /^data:image\//i.test(value)) return value
   const path = value.startsWith('file://') ? decodeURIComponent(value.slice('file://'.length)) : value
-  if (path.startsWith('/') || /^[a-z]:[\\/]/i.test(path)) return `${appConfig.localFileScheme}://local/${base64UrlEncode(path)}`
+  if (path.startsWith('/') || /^[a-z]:[\\/]/i.test(path)) return `yiw-file://local/${base64UrlEncode(path)}`
   return value
 }
 
 export function isRenderableImageSrc(src: string) {
   return (
-    src.startsWith(`${appConfig.localFileScheme}://`) ||
+    src.startsWith('yiw-file://') ||
     /^https?:\/\//i.test(src) ||
     /^data:image\//i.test(src) ||
     hasKnownExtension(src, IMAGE_EXTENSIONS)

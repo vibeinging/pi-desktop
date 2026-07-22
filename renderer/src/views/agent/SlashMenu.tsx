@@ -1,6 +1,6 @@
 // 聊天框斜杠命令面板:输入以 / 开头时弹出。命令是「操作」(执行),不是插入文本。
 import { IconArchive, type Icon as TablerIcon } from '@tabler/icons-react'
-import styles from './agent.module.scss'
+import styles from './yiw.module.scss'
 
 export interface SlashCommand {
   name: string

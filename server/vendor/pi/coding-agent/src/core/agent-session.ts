@@ -453,20 +453,24 @@ export class AgentSession {
 				toolName: toolCall.name,
 				toolCallId: toolCall.id,
 				input: args as Record<string, unknown>,
-				content: result.content,
-				details: result.details,
-				isError,
-			});
+					content: result.content,
+					details: result.details,
+					isError,
+					...(result.handoff ? { handoff: result.handoff } : {}),
+					...(result.terminate !== undefined ? { terminate: result.terminate } : {}),
+				});
 
 			if (!hookResult) {
 				return undefined;
 			}
 
 			return {
-				content: hookResult.content,
-				details: hookResult.details,
-				isError: hookResult.isError ?? isError,
-			};
+					content: hookResult.content,
+					details: hookResult.details,
+					isError: hookResult.isError ?? isError,
+					...(Object.hasOwn(hookResult, "handoff") ? { handoff: hookResult.handoff } : {}),
+					...(Object.hasOwn(hookResult, "terminate") ? { terminate: hookResult.terminate } : {}),
+				};
 		};
 	}
 

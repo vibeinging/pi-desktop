@@ -1,3 +1,4 @@
+// 源：views/project/settings/components/McpProviderDetail.vue
 // MCP Provider 详情 / 设置页：基本信息 tab(只读展示启动命令、环境变量、错误、元信息) +
 // 设置 tab(编辑命令/参数/环境变量、保存、删除) + 头部启用开关 + 测试连接对话框。
 import { useEffect, useMemo, useState } from 'react'
@@ -324,7 +325,7 @@ export default function McpProviderDetail({
   }
 
   const handleDelete = () => {
-    // 删除或恢复默认值前要求用户确认
+    // ElMessageBox.confirm → modals.openConfirmModal
     const isProjectReset = !isAppScope
     modals.openConfirmModal({
       title: isProjectReset ? '恢复 App 默认' : t('mcpProvider.list.deleteConfirm.title'),
@@ -358,9 +359,9 @@ export default function McpProviderDetail({
   }
 
   return (
-    <div className={styles['app-detail-page']}>
+    <div className={styles['ad-detail-page']}>
       {/* 返回按钮 */}
-      <div className={styles['app-detail-page-header']}>
+      <div className={styles['ad-detail-page-header']}>
         <ActionIcon variant="subtle" color="gray" onClick={() => onBack?.()}>
           <ElSvgIcon name="ArrowLeft" size={16} />
         </ActionIcon>
@@ -399,8 +400,8 @@ export default function McpProviderDetail({
         </div>
       </div>
 
-      <div className={styles['app-detail-page-content']}>
-        <Tabs value={activeTab} onChange={setActiveTab} className={styles['app-detail-tabs']}>
+      <div className={styles['ad-detail-page-content']}>
+        <Tabs value={activeTab} onChange={setActiveTab} className={styles['ad-detail-tabs']}>
           <Tabs.List>
             {/* 基本信息 */}
             <Tabs.Tab

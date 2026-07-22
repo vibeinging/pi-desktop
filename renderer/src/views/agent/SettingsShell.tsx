@@ -18,7 +18,7 @@ export function SettingsShell({
   mainFixed?: boolean
   children: ReactNode
 }) {
-  // 主题由祖先 .agent-root[data-theme] 决定(--agent-* token),壳本身不需要再读 scheme。
+  // 主题由祖先 .yiw-root[data-theme] 决定(--yiw-* token),壳本身不需要再读 scheme。
   return (
     <div className={styles.wrap}>
       <aside className={styles.side}>

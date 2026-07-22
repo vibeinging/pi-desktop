@@ -1,7 +1,6 @@
 /**
- * Renderer 全局设置。
+ * 全局设置(对齐原 src/settings.js)。仅保留 React 工程仍有意义的字段。
  */
-import { appConfig } from '@/generated/app-config'
 export interface AppSettings {
   title: string
   sidebarLogo: boolean
@@ -13,7 +12,12 @@ export interface AppSettings {
   tagsViewNum: number
   showTopNavbar: boolean
   mainNeedAnimation: boolean
+  isNeedNprogress: boolean
+  isNeedLogin: boolean
+  permissionMode: 'rbac' | 'roles' | 'code'
+  errorLog: string[]
   delWindowHeight: string
+  tmpToken: string
   viteBasePath: string
   defaultLanguage: 'zh' | 'en'
   defaultTheme: string
@@ -23,7 +27,7 @@ export interface AppSettings {
 }
 
 export const settings: AppSettings = {
-  title: appConfig.productName,
+  title: 'YiW',
   sidebarLogo: true,
   showNavbarTitle: false,
   ShowDropDown: true,
@@ -33,10 +37,15 @@ export const settings: AppSettings = {
   tagsViewNum: 6,
   showTopNavbar: true,
   mainNeedAnimation: false,
+  isNeedNprogress: true,
+  isNeedLogin: true,
+  permissionMode: 'roles',
+  errorLog: ['prod'],
   delWindowHeight: '210px',
+  tmpToken: 'tmp_token',
   viteBasePath: '/',
-  defaultLanguage: appConfig.defaultLocale,
-  defaultTheme: appConfig.defaultTheme,
+  defaultLanguage: 'zh',
+  defaultTheme: 'yiw-warm',
   defaultSize: 'default',
   plateFormId: 2,
   enableDocs: true

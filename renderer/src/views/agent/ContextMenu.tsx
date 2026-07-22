@@ -1,8 +1,8 @@
-// 通用右键菜单。门户挂到 .agent-root(主题作用域内、且不被 .agent-zoom 缩放),
+// 通用右键菜单。门户挂到 .yiw-root(主题作用域内、且不被 .yiw-zoom 缩放),
 // position:fixed 按光标 viewport 坐标定位;点外部 / Esc 关闭;近屏幕边自动翻转。
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import styles from './agent.module.scss'
+import styles from './yiw.module.scss'
 
 export interface MenuItem {
   key: string
@@ -54,7 +54,7 @@ export default function ContextMenu({
     }
   }, [onClose])
 
-  const host = (typeof document !== 'undefined' && document.querySelector('.agent-root')) || document.body
+  const host = (typeof document !== 'undefined' && document.querySelector('.yiw-root')) || document.body
 
   return createPortal(
     <div

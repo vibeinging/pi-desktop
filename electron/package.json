@@ -1,24 +1,17 @@
 {
-  "name": "pi-desktop-electron",
-  "productName": "PI Desktop",
+  "name": "yiw-electron",
+  "productName": "YiW",
   "version": "0.1.0",
-  "description": "PI Desktop 桌面壳，基于 Electron 承载 React 渲染层与本地 Node 后端",
-  "author": "PI Desktop contributors",
-  "license": "MIT",
+  "description": "YiW 桌面壳，基于 Electron 承载 React 渲染层与本地 Node 后端",
   "private": true,
   "main": "main.js",
-  "engines": {
-    "node": ">=22.19.0",
-    "npm": ">=11.0.0"
-  },
   "scripts": {
+    "prestart": "npm --prefix ../server run ensure:pi",
     "start": "electron .",
-    "dev": "electron .",
-    "rebuild:help": "electron-rebuild --help"
+    "predev": "npm --prefix ../server run ensure:pi",
+    "dev": "electron ."
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.2.0",
-    "electron-builder": "^26.15.3",
     "electron": "^42.4.1"
   }
 }

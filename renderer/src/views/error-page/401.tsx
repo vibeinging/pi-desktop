@@ -8,7 +8,7 @@ export default function V401() {
   const navigate = useNavigate()
 
   const goHome = () => {
-    navigate('/')
+    navigate('/projects')
   }
 
   return (

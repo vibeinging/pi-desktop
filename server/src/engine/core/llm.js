@@ -1,4 +1,5 @@
-// LLM 客户端核心：支持普通调用、流式输出和工具调用，并兼容常见模型 API。
+// 迁移自 backend/core/llm/__init__.py + backend/core/llm/chat.py
+// 合并导出：LLM 客户端核心（chat / stream / tool-calling），OpenAI 兼容协议，node fetch。
 
 import { AsyncLocalStorage } from 'async_hooks';
 import { t } from '../utils/i18n.js';
@@ -54,7 +55,6 @@ export class TokenUsage {
   constructor({
     prompt_tokens = 0,
     completion_tokens = 0,
-    reasoning_tokens = 0,
     total_tokens = 0,
     cached_tokens = 0,
     cache_write_tokens = 0,
@@ -62,7 +62,6 @@ export class TokenUsage {
   } = {}) {
     this.prompt_tokens = prompt_tokens;
     this.completion_tokens = completion_tokens;
-    this.reasoning_tokens = reasoning_tokens;
     this.total_tokens = total_tokens;
     this.cached_tokens = cached_tokens;
     this.cache_write_tokens = cache_write_tokens;
@@ -73,7 +72,6 @@ export class TokenUsage {
   add(other) {
     this.prompt_tokens += other.prompt_tokens || 0;
     this.completion_tokens += other.completion_tokens || 0;
-    this.reasoning_tokens += other.reasoning_tokens || 0;
     this.total_tokens += other.total_tokens || 0;
     this.cached_tokens += other.cached_tokens || 0;
     this.cache_write_tokens += other.cache_write_tokens || 0;
@@ -83,7 +81,6 @@ export class TokenUsage {
   get isEmpty() {
     return (
       this.total_tokens === 0 &&
-      this.reasoning_tokens === 0 &&
       this.cached_tokens === 0 &&
       this.cache_write_tokens === 0 &&
       this.cost_usd === 0
@@ -94,7 +91,6 @@ export class TokenUsage {
     return {
       prompt_tokens: this.prompt_tokens,
       completion_tokens: this.completion_tokens,
-      reasoning_tokens: this.reasoning_tokens,
       total_tokens: this.total_tokens,
       cached_tokens: this.cached_tokens,
       cache_write_tokens: this.cache_write_tokens,
@@ -103,7 +99,7 @@ export class TokenUsage {
   }
 
   toString() {
-    return `TokenUsage(prompt=${this.prompt_tokens}, completion=${this.completion_tokens}, reasoning=${this.reasoning_tokens}, total=${this.total_tokens}, cached=${this.cached_tokens}, cache_write=${this.cache_write_tokens})`;
+    return `TokenUsage(prompt=${this.prompt_tokens}, completion=${this.completion_tokens}, total=${this.total_tokens}, cached=${this.cached_tokens}, cache_write=${this.cache_write_tokens})`;
   }
 }
 
@@ -158,8 +154,7 @@ export function recordUsage(usage, modelName = '', callSite = null) {
   console.info(
     `[TOKEN] model=${modelName} call_site=${cs} | ` +
     `prompt=${usage.prompt_tokens} completion=${usage.completion_tokens} ` +
-    `reasoning=${usage.reasoning_tokens || 0} total=${usage.total_tokens} ` +
-    `cached=${usage.cached_tokens} cache_write=${usage.cache_write_tokens || 0}`
+    `total=${usage.total_tokens} cached=${usage.cached_tokens} cache_write=${usage.cache_write_tokens || 0}`
   );
   const tracker = _trackerStorage.getStore();
   if (tracker) {
@@ -226,7 +221,7 @@ export class TokenTracker {
 }
 
 // ============================================================
-// 响应内容提取
+// ResponseExtractor（内联迁移自 response_extractor.py）
 // ============================================================
 
 const _RE_THINKING_TAGS = /<(thinking|think|思考|思考过程)[^>]*>[\s\S]*?<\/\1[^>]*>/gi;
@@ -613,7 +608,7 @@ export class ResponseExtractor {
 }
 
 // ============================================================
-// 不完整 JSON 解析
+// partial JSON 解析（迁移自 partial_json.py）
 // ============================================================
 
 /**
@@ -771,7 +766,8 @@ export function parsePartialJson(text) {
 }
 
 /**
- * 从不完整 JSON 构造一个简单对象（跳过验证），供流式结构化输出使用
+ * 从不完整 JSON 构造一个简单对象（跳过验证）——流式 typed 场景用
+ * 对标 Python parse_partial_into_model（Node 版无 Pydantic，返回原始 dict）
  * @param {string} text
  * @returns {object|null}
  */
@@ -804,7 +800,9 @@ export function resolveModelCategory(modelRole) {
 }
 
 /**
- * 模型配置的 TTL 内存缓存，不直接依赖数据库
+ * TTL 内存缓存（简化版，无 DB 查询依赖）
+ * Node 桌面版直接从环境变量 / 配置对象读取模型 config，
+ * 不连接后端 PostgreSQL / Vastbase，与 Python 版解耦。
  */
 class SimpleCache {
   /** @param {number} ttlMs */
@@ -833,10 +831,13 @@ class SimpleCache {
 const _modelConfigCache = new SimpleCache(180_000);
 
 /**
- * 模型配置解析器，从外部提供者或环境变量读取
+ * 模型配置解析器（Node 版 — 从外部注入或环境变量读取）
  *
- * 1. 调用方通过 setModelConfigProvider() 注册异步解析函数
- * 2. 未注册时读取 LLM_API_BASE、LLM_API_KEY 和 LLM_MODEL_NAME
+ * Python 版依赖 SQLAlchemy + Vastbase DB 三层查找。Node 版简化为：
+ * 1. 调用方通过 setModelConfigProvider() 注册一个 async 解析函数（供桌面应用注入 Electron Store 等）
+ * 2. 若未注册，fallback 到环境变量 LLM_API_BASE / LLM_API_KEY / LLM_MODEL_NAME
+ *
+ * TODO: 若需要连 Vastbase 读取配置，可在此实现 HTTP 代理调用后端接口。
  */
 export class ModelConfigResolver {
   /** @type {((opts: { model_id?: string, project_id?: string, category?: string }) => Promise<object>)|null} */
@@ -892,10 +893,6 @@ export class ModelConfigResolver {
       };
     }
 
-    if (!config || [false, 0, '0', 'false'].includes(config.is_enabled)) {
-      throw new ModelNotFoundError(`未找到已启用的模型(category=${category})`);
-    }
-
     _modelConfigCache.set(cacheKey, config);
     return config;
   }
@@ -908,7 +905,7 @@ export function invalidateModelConfigCache() {
 
 /**
  * 文本向量化（OpenAI 兼容 /embeddings,默认解析 category=EMBEDDING 的模型,如 text-embedding-v3）。
- * 供 Agent、Skills 或其他本地能力执行通用文本向量化。
+ * 供 schema/实体/指标的向量召回(配合 vexdb_lite 扩展)。
  * @param {string|string[]} texts
  * @param {{model_id?:string, project_id?:string}} [opts]
  * @returns {Promise<number[]|number[][]>} 输入为单串返回单向量;为数组返回向量数组(按输入顺序)
@@ -974,7 +971,7 @@ export class SelfConsistencyConfig {
 }
 
 // ============================================================
-// HTTP 请求构建
+// HTTP 请求构建（迁移自 http_client.py）
 // ============================================================
 
 /**
@@ -1047,7 +1044,7 @@ function _mergeJsonInto(data, raw) {
 }
 
 /**
- * 注入模型的思考设置参数
+ * 注入「思考设置」参数（对标 Python _apply_thinking）
  * @param {object} data
  * @param {object} extra
  */
@@ -1274,7 +1271,7 @@ function _ensureJsonHintInMessages(messages) {
  * @returns {string}
  */
 function _formatLogMessage(role, content) {
-  return content;
+  return content; // 与 Python 一致：全量输出（过滤规则当前为空）
 }
 
 /**
@@ -1830,7 +1827,7 @@ async function _chatWithSelfConsistency({
 }
 
 // ============================================================
-// 请求重试
+// 重试装饰器（内联实现，对标 Python @retry）
 // ============================================================
 
 /**
@@ -1863,7 +1860,7 @@ async function _withRetry(fn, { maxRetries = 3, delay = 1000, backoff = 2.0 } = 
 // ============================================================
 
 /**
- * 统一的 LLM 调用接口
+ * 统一的 LLM 调用接口，对标 Python chat()
  *
  * 支持五种模式：
  * 1. 普通模式: chat("你好") -> Promise<string>

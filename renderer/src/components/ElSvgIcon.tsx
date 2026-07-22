@@ -1,7 +1,7 @@
 import { resolveEpIcon } from '@/lib/icon-map'
 
 /**
- * 用 Element Plus 图标名渲染 Tabler 图标。
+ * 用 Element Plus 图标名渲染 Tabler 图标(对齐原 components/ElSvgIcon.vue)。
  * props: name(EP 名), size(px), color。
  */
 export interface ElSvgIconProps {

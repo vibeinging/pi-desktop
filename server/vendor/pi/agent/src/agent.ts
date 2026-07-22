@@ -9,6 +9,7 @@ import {
 	type Transport,
 } from "@earendil-works/pi-ai/compat";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
+import { isHandoffAssistantMessage, prepareHandoffMessageForLlm } from "./message-conversion.ts";
 import type {
 	AfterToolCallContext,
 	AfterToolCallResult,
@@ -30,9 +31,10 @@ import type {
 export type { QueueMode } from "./types.ts";
 
 function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
-	return messages.filter(
-		(message) => message.role === "user" || message.role === "assistant" || message.role === "toolResult",
-	);
+	return messages.flatMap((message) => {
+		if (message.role !== "user" && message.role !== "assistant" && message.role !== "toolResult") return [];
+		return [isHandoffAssistantMessage(message) ? prepareHandoffMessageForLlm(message) : message];
+	});
 }
 
 const EMPTY_USAGE = {

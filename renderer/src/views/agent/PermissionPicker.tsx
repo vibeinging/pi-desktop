@@ -2,7 +2,7 @@
 // 控制写/执行类工具的治理确认:请求批准 / 替我审批 / 完全访问。随会话发给后端 beforeToolCall。
 import { useEffect, useRef, useState } from 'react'
 import { IconCheck, IconHandStop, IconLockOpen, IconShieldCheck, type TablerIcon } from '@tabler/icons-react'
-import styles from './agent.module.scss'
+import styles from './yiw.module.scss'
 
 export type Approval = 'ask' | 'auto' | 'full'
 
@@ -12,7 +12,7 @@ const MODES: { value: Approval; Icon: TablerIcon; label: string; desc: string }[
   { value: 'full', Icon: IconLockOpen, label: '完全访问', desc: '不询问,直接读写 / 执行' }
 ]
 
-export default function PermissionPicker({ value, onChange }: { value: Approval; onChange: (v: Approval) => void }) {
+export default function PermissionPicker({ value, onChange, locked = false }: { value: Approval; onChange: (v: Approval) => void; locked?: boolean }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const active = MODES.find((m) => m.value === value) || MODES[0]
@@ -29,12 +29,18 @@ export default function PermissionPicker({ value, onChange }: { value: Approval;
   const ActiveIcon = active.Icon
   return (
     <div className={styles.permPick} ref={ref}>
-      <button type="button" className={styles.permBtn} onClick={() => setOpen((o) => !o)} title="批准方式">
+      <button
+        type="button"
+        className={styles.permBtn}
+        onClick={() => !locked && setOpen((o) => !o)}
+        title={locked ? 'Skill Product 固定为请求批准' : '批准方式'}
+        disabled={locked}
+      >
         <ActiveIcon size={14} stroke={1.7} />
         <span>{active.label}</span>
       </button>
 
-      {open && (
+      {open && !locked && (
         <div className={styles.permPanel}>
           <div className={styles.permHd}>应如何批准操作?</div>
           {MODES.map((m) => {

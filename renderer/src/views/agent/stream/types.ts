@@ -15,6 +15,32 @@ export interface AgentMessage {
   workstationBlocks?: AgentBlock[]
 }
 
+export interface DataWorkspaceEvent {
+  type?: string
+  event?: 'project_created' | 'session_moved' | 'project_data_preparing' | 'project_ready_for_query' | string
+  source_tool?: string
+  origin_project_id?: string | null
+  session_id?: string | null
+  project_id?: string
+  project?: any
+  connection_id?: string | null
+  data_source_id?: string | null
+  table_count?: number
+  document_count?: number
+  status?: string | null
+  next_skill?: string | null
+  module_id?: string | null
+  module_key?: string | null
+  page_id?: string | null
+  invocation_id?: string | null
+  draft_id?: string | null
+  preview_content?: any
+  preview_token?: string | null
+  preview_revision?: number | null
+  preview_validation_hash?: string | null
+  module?: any
+}
+
 export interface AgentStreamEventV1 {
   v: 1
   type: string
@@ -38,6 +64,7 @@ export interface WorkstationPatch {
 export interface AgentStreamPatch {
   block?: AgentBlock
   workstation?: WorkstationPatch
+  workspaceEvent?: DataWorkspaceEvent
   scrollDelayMs?: number
   ignored?: boolean
 }

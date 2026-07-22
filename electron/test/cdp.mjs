@@ -22,7 +22,7 @@ export async function openSession({ port = 9333 } = {}) {
   while (Date.now() < deadline) {
     try {
       const ts = await (await fetch(`http://localhost:${port}/json`)).json();
-      page = ts.find((t) => t.type === 'page' && /localhost:52731|index\.html/.test(t.url || ''));
+      page = ts.find((t) => t.type === 'page' && /localhost:57131|index\.html/.test(t.url || ''));
       if (page) break;
     } catch { /* not up */ }
     await sleep(400);

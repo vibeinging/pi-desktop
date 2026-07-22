@@ -13,7 +13,7 @@ import {
   listMcpProvidersReq,
   testAppMcpProviderReq
 } from '@/api/mcp'
-// 详情组件参数由列表页集中组装。
+// TODO(migration): McpProviderDetail 尚为 stub(无 props 类型),先以 any 桥接以传递 props
 import McpProviderDetailRaw from './McpProviderDetail'
 import styles from './McpProviderListView.module.scss'
 
@@ -397,12 +397,12 @@ export default function McpProviderListView({
   const recapEnvRows = form.envRows.filter((r) => r.key)
 
   return (
-    <div className="app-page-list">
+    <div className="ad-page-list">
       {/* 列表视图 */}
       {!selectedItemId ? (
         <>
           {dataList.length > 0 && (
-            <div className="app-page-toolbar">
+            <div className="ad-page-toolbar">
               <span className="toolbar-count">
                 {isAppScope ? 'MCP Provider Library' : t('mcpProvider.title')} ({dataList.length})
               </span>
@@ -417,12 +417,12 @@ export default function McpProviderListView({
           )}
 
           {dataList.length > 0 && (
-            <div className="app-page-content app-card-grid" style={{ position: 'relative' }}>
+            <div className="ad-page-content ad-card-grid" style={{ position: 'relative' }}>
               <LoadingOverlay visible={loading} />
               {dataList.map((item) => (
                 <div
                   key={item.id}
-                  className={`app-grid-card ${styles.mcpCard} ${!item.is_enabled ? styles.isDisabled : ''}`}
+                  className={`ad-grid-card ${styles.mcpCard} ${!item.is_enabled ? styles.isDisabled : ''}`}
                   onClick={() => selectItem(item)}
                 >
                   <div className="grid-card-header">
@@ -518,7 +518,7 @@ export default function McpProviderListView({
 
           {/* 空状态 */}
           {!loading && dataList.length === 0 && (
-            <div className={`app-page-empty ${styles.mcpEmpty}`}>
+            <div className={`ad-page-empty ${styles.mcpEmpty}`}>
               <div className={styles.emptyIllustration}>
                 <div className={styles.illustrationContainer}>
                   <div className={`${styles.mcpSatellite} ${styles.left}`}>
@@ -933,7 +933,7 @@ export default function McpProviderListView({
                     {!testResult && !testing && (
                       <div className={styles.testStageIdle}>
                         <div className={styles.stageIcon}>
-                          <ElSvgIcon name="Connection" size={40} color="#6b1a96" />
+                          <ElSvgIcon name="Connection" size={40} color="#17483e" />
                         </div>
                         <h4>{t('mcpProvider.wizard.step3.ctaHeadline')}</h4>
                         <p className={styles.stageSub}>{t('mcpProvider.wizard.step3.ctaSub')}</p>
@@ -944,7 +944,7 @@ export default function McpProviderListView({
                     {testing && (
                       <div className={styles.testStageRunning}>
                         <div className={`${styles.stageIcon} ${styles.stageIconSpin}`}>
-                          <ElSvgIcon name="Loading" size={40} color="#6b1a96" />
+                          <ElSvgIcon name="Loading" size={40} color="#17483e" />
                         </div>
                         <h4>{t('mcpProvider.wizard.step3.running')}</h4>
                         <p className={styles.stageSub}>{t('mcpProvider.wizard.step3.runningSub')}</p>

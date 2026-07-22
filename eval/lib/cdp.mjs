@@ -1,44 +1,18 @@
 // CDP harness:连进(或自启)Electron 渲染进程,在真实 window 上执行 JS。零依赖(Node v18+ fetch / v22+ WebSocket)。
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import path, { delimiter } from 'node:path';
+import path from 'node:path';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ELECTRON_DIR = path.resolve(__dirname, '..', '..', 'electron'); // app/eval/lib → app/electron
+const ELECTRON_DIR = path.resolve(__dirname, '..', '..', 'electron'); // eval/lib → electron
 const RENDERER_DIR = path.resolve(__dirname, '..', '..', 'renderer');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const APP_PAGE_RE = /(?:localhost|127\.0\.0\.1):\d+|index\.html|file:\/\//;
-const DEFAULT_RENDERER_PORT = Number(process.env.PI_RENDERER_PORT || 52731);
+const DEFAULT_RENDERER_PORT = Number(process.env.YIW_RENDERER_PORT || 57131);
 const SERVER_NATIVE_SQLITE = path.resolve(__dirname, '..', '..', 'server', 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node');
-
-function nativeArch(filePath) {
-  if (!existsSync(filePath)) return '';
-  try {
-    const output = execFileSync('file', [filePath], { encoding: 'utf8' });
-    if (output.includes('arm64')) return 'arm64';
-    if (output.includes('x86_64')) return 'x64';
-  } catch { /* ignore */ }
-  return '';
-}
-
-function resolveBackendNode() {
-  if (process.env.PI_NODE_BIN && existsSync(process.env.PI_NODE_BIN)) return process.env.PI_NODE_BIN;
-  const arch = nativeArch(SERVER_NATIVE_SQLITE);
-  const candidates = [
-    process.execPath,
-    ...String(process.env.PATH || '').split(delimiter).map((dir) => path.join(dir, process.platform === 'win32' ? 'node.exe' : 'node')),
-    '/opt/homebrew/bin/node',
-    '/usr/local/bin/node',
-  ].filter((value, index, all) => value && existsSync(value) && all.indexOf(value) === index);
-  if (!arch) return process.execPath;
-  return candidates.find((candidate) => {
-    try { return execFileSync(candidate, ['-p', 'process.arch'], { encoding: 'utf8' }).trim() === arch; }
-    catch { return false; }
-  }) || process.execPath;
-}
 
 function isTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value || '').trim());
@@ -47,25 +21,64 @@ function isTruthy(value) {
 function createEvalEnv(rendererUrl) {
   const base = {
     ...process.env,
-    PI_DEV_URL: rendererUrl,
-    PI_NODE_BIN: resolveBackendNode(),
+    YIW_DEV_URL: rendererUrl,
+    YIW_NODE_BIN: resolveBackendNode(),
   };
 
-  const shouldIsolate = isTruthy(process.env.PI_EVAL_ISOLATED) || !!process.env.PI_EVAL_HOME;
+  const shouldIsolate = isTruthy(process.env.YIW_EVAL_ISOLATED) || !!process.env.YIW_EVAL_HOME;
   if (!shouldIsolate) {
-    return { ...base, PI_EVAL_MODE: 'normal' };
+    const env = { ...base };
+    if (process.env.YIW_EVAL_DB_SQLITE_PATH) env.DB_SQLITE_PATH = process.env.YIW_EVAL_DB_SQLITE_PATH;
+    env.YIW_EVAL_MODE = process.env.YIW_EVAL_DB_SQLITE_PATH ? 'custom-db' : 'normal';
+    return env;
   }
 
-  const evalHome = process.env.PI_EVAL_HOME || mkdtempSync(path.join(tmpdir(), 'pi-desktop-app-eval-'));
+  const evalHome = process.env.YIW_EVAL_HOME || mkdtempSync(path.join(tmpdir(), 'yiw-app-eval-'));
+  const yiwDir = path.join(evalHome, '.yiw');
+  mkdirSync(yiwDir, { recursive: true });
   return {
     ...base,
     HOME: evalHome,
     USERPROFILE: evalHome,
     XDG_CONFIG_HOME: path.join(evalHome, '.config'),
     APPDATA: path.join(evalHome, 'AppData', 'Roaming'),
-    PI_EVAL_HOME: evalHome,
-    PI_EVAL_MODE: 'isolated',
+    DB_SQLITE_PATH: process.env.YIW_EVAL_DB_SQLITE_PATH || path.join(yiwDir, 'local.db'),
+    YIW_EVAL_HOME: evalHome,
+    YIW_EVAL_MODE: 'isolated',
   };
+}
+
+function nativeArch(filePath) {
+  if (!existsSync(filePath)) return '';
+  try {
+    const out = execFileSync('file', [filePath], { encoding: 'utf8' });
+    if (out.includes('arm64')) return 'arm64';
+    if (out.includes('x86_64')) return 'x64';
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
+function nodeArch(nodePath) {
+  try {
+    return execFileSync(nodePath, ['-p', 'process.arch'], { encoding: 'utf8' }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function resolveBackendNode() {
+  if (process.env.YIW_NODE_BIN && existsSync(process.env.YIW_NODE_BIN)) return process.env.YIW_NODE_BIN;
+  const targetArch = nativeArch(SERVER_NATIVE_SQLITE);
+  if (!targetArch) return process.execPath;
+  const candidates = [
+    process.execPath,
+    ...String(process.env.PATH || '').split(path.delimiter).map((dir) => path.join(dir, 'node')),
+    '/opt/homebrew/bin/node',
+    '/usr/local/bin/node',
+  ].filter((p, i, arr) => p && existsSync(p) && arr.indexOf(p) === i);
+  return candidates.find((p) => nodeArch(p) === targetArch) || process.execPath;
 }
 
 function isPortOpen(port) {
@@ -116,7 +129,7 @@ async function fetchText(url, { timeoutMs = 1500 } = {}) {
   }
 }
 
-async function isPiDesktopRenderer(port) {
+async function isYiWRenderer(port) {
   try {
     const text = await fetchText(`http://127.0.0.1:${port}/src/store/basic.ts`);
     return text.includes('useBasicStore');
@@ -126,7 +139,7 @@ async function isPiDesktopRenderer(port) {
 }
 
 async function findFreePort(start) {
-  let port = Number(start) || 52731;
+  let port = Number(start) || 57131;
   for (let i = 0; i < 50; i++) {
     if (!(await isPortOpen(port))) return port;
     port += 1;
@@ -138,13 +151,13 @@ async function findFreePort(start) {
 export async function openSession({ port = 9333 } = {}) {
   let child = null;
   let rendererChild = null;
-  let rendererUrl = process.env.PI_DEV_URL || `http://127.0.0.1:${DEFAULT_RENDERER_PORT}`;
+  let rendererUrl = process.env.YIW_DEV_URL || `http://127.0.0.1:${DEFAULT_RENDERER_PORT}`;
   try {
     await fetchJson(`http://localhost:${port}/json/version`);
   } catch {
-    if (!process.env.PI_DEV_URL) {
+    if (!process.env.YIW_DEV_URL) {
       let rendererPort = DEFAULT_RENDERER_PORT;
-      const rendererReady = await isPiDesktopRenderer(rendererPort);
+      const rendererReady = await isYiWRenderer(rendererPort);
       if (!rendererReady && (await isPortOpen(rendererPort))) {
         rendererPort = await findFreePort(rendererPort + 1);
       }
@@ -168,7 +181,7 @@ export async function openSession({ port = 9333 } = {}) {
       }
     }
     const env = createEvalEnv(rendererUrl);
-    console.info(`[eval] 启动 Electron: mode=${env.PI_EVAL_MODE || 'normal'} HOME=${env.HOME || process.env.HOME || ''}`);
+    console.info(`[eval] 启动 Electron: mode=${env.YIW_EVAL_MODE || 'normal'} HOME=${env.HOME || process.env.HOME || ''} DB=${env.DB_SQLITE_PATH || '(default ~/.yiw/local.db)'}`);
     child = spawn('./node_modules/.bin/electron', ['.', `--remote-debugging-port=${port}`], {
       cwd: ELECTRON_DIR,
       env,

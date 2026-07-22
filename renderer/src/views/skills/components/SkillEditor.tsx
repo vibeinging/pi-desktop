@@ -77,7 +77,7 @@ const SkillEditor = forwardRef<SkillEditorHandle, SkillEditorProps>(function Ski
           tags: skill.tags || [],
           allowed_tools: skill.allowed_tools || [],
           instructions: skill.instructions || '',
-          runtime: 'prompt',
+          runtime: skill.runtime || 'prompt',
           side_effect: skill.side_effect || 'read',
           requires_project: !!skill.requires_project
         }
@@ -108,7 +108,7 @@ const SkillEditor = forwardRef<SkillEditorHandle, SkillEditorProps>(function Ski
             tags: skill.tags || [],
             allowed_tools: skill.allowed_tools || [],
             instructions: skill.instructions || '',
-            runtime: 'prompt',
+            runtime: skill.runtime || 'prompt',
             side_effect: skill.side_effect || 'read',
             requires_project: !!skill.requires_project
           }
@@ -222,7 +222,7 @@ const SkillEditor = forwardRef<SkillEditorHandle, SkillEditorProps>(function Ski
         if (data.tags) next.tags = data.tags
         if (data.allowed_tools) next.allowed_tools = data.allowed_tools
         if (data.instructions) next.instructions = data.instructions
-        next.runtime = 'prompt'
+        if (data.runtime) next.runtime = data.runtime
         if (data.side_effect) next.side_effect = data.side_effect
         if (typeof data.requires_project === 'boolean') next.requires_project = data.requires_project
         return next
@@ -266,7 +266,7 @@ const SkillEditor = forwardRef<SkillEditorHandle, SkillEditorProps>(function Ski
         tags: data.tags || [],
         allowed_tools: data.allowed_tools || [],
         instructions: data.instructions || '',
-        runtime: 'prompt',
+        runtime: data.runtime || 'prompt',
         side_effect: data.side_effect || 'read',
         requires_project: !!data.requires_project
       })
@@ -323,11 +323,15 @@ const SkillEditor = forwardRef<SkillEditorHandle, SkillEditorProps>(function Ski
           />
         </div>
         <div className={`${styles.topField} ${styles.topFieldShort}`}>
-          <TextInput
+          <Select
             label="运行类型"
-            value="Prompt"
-            readOnly
-            description="当前稳定版本只支持 Prompt Skill"
+            value={form.runtime}
+            onChange={(val) => setForm((prev) => ({ ...prev, runtime: val || 'prompt' }))}
+            data={[
+              { value: 'prompt', label: 'Prompt' },
+              { value: 'service', label: 'Service' },
+              { value: 'workflow', label: 'Workflow' }
+            ]}
           />
         </div>
         <div className={`${styles.topField} ${styles.topFieldShort}`}>

@@ -8,10 +8,10 @@ const resolvePort = (value: string | undefined, fallback: number) => {
   return Number.isInteger(parsed) && parsed >= 1 && parsed <= 65535 ? parsed : fallback
 }
 
-// Renderer 构建配置：alias '@' 指向 src，开发代理读取环境变量，SVG sprite 使用 icons 目录。
+// 对齐原 Vue 工程：alias '@' → src，dev 代理走 env，svg sprite 走 icons 目录
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const devPort = resolvePort(env.VITE_APP_DEV_PORT || env.VITE_DEV_PORT, 52731)
+  const devPort = resolvePort(env.VITE_APP_DEV_PORT || env.VITE_DEV_PORT, 57131)
   const pathSrc = path.resolve(__dirname, 'src')
 
   return {
@@ -23,7 +23,7 @@ export default defineConfig(({ mode }) => {
       open: false,
       host: true,
       // dev 联调:把 VITE_PROXY_BASE_URL(如 /api) 代理到运行的后端 VITE_PROXY_URL。
-      // 后端路由本身就挂在 /api/* 下,故**保留路径前缀**(不 rewrite 去掉),否则会把 /api/projects 改成 /projects。
+      // 后端路由本身就挂在 /api/* 下,故**保留路径前缀**(不 rewrite 去掉),否则会把 /api/user/login 改成 /user/login。
       proxy: env.VITE_PROXY_BASE_URL
         ? {
             [env.VITE_PROXY_BASE_URL]: {
@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       react(),
-      // 收集 src/icons/common 和 nav-bar 下的 SVG，生成 #icon-[dir]-[name] sprite。
+      // 复用原 src/icons/common + nav-bar 下的 svg，sprite 注入方式与 Vue 版一致：#icon-[dir]-[name]
       createSvgIconsPlugin({
         iconDirs: [path.resolve(pathSrc, 'icons/common'), path.resolve(pathSrc, 'icons/nav-bar')],
         symbolId: 'icon-[dir]-[name]'
@@ -68,8 +68,8 @@ export default defineConfig(({ mode }) => {
         scss: {
           api: 'modern-compiler',
           silenceDeprecations: ['legacy-js-api'],
-          // 将 responsive.scss 的 mobile/tablet 等 mixin 全局注入每个 SCSS 入口。
-          additionalData: `@use "${pathSrc.replace(/\\/g, '/')}/styles/responsive.scss" as *;\n`
+          // 对齐原工程:把 responsive.scss 的 @include mobile/tablet 等 mixin 全局注入每个 scss 入口
+          additionalData: `@use "${pathSrc.replace(/\\\\/g, '/')}/styles/responsive.scss" as *;\n`
         }
       }
     }

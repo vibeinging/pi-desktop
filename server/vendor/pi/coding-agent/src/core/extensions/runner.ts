@@ -826,6 +826,9 @@ export class ExtensionRunner {
 		const ctx = this.createContext();
 		const currentEvent: ToolResultEvent = { ...event };
 		let modified = false;
+		let handoffCleared = false;
+		let handoffIncluded = Object.hasOwn(event, "handoff");
+		let terminateIncluded = Object.hasOwn(event, "terminate");
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("tool_result");
@@ -846,6 +849,17 @@ export class ExtensionRunner {
 					}
 					if (handlerResult.isError !== undefined) {
 						currentEvent.isError = handlerResult.isError;
+						modified = true;
+					}
+					if (Object.hasOwn(handlerResult, "handoff")) {
+						handoffIncluded = true;
+						handoffCleared = handlerResult.handoff === null;
+						currentEvent.handoff = handlerResult.handoff ?? undefined;
+						modified = true;
+					}
+					if (handlerResult.terminate !== undefined) {
+						terminateIncluded = true;
+						currentEvent.terminate = handlerResult.terminate;
 						modified = true;
 					}
 				} catch (err) {
@@ -869,6 +883,8 @@ export class ExtensionRunner {
 			content: currentEvent.content,
 			details: currentEvent.details,
 			isError: currentEvent.isError,
+			...(handoffIncluded ? { handoff: handoffCleared ? null : currentEvent.handoff } : {}),
+			...(terminateIncluded ? { terminate: currentEvent.terminate } : {}),
 		};
 	}
 

@@ -1,207 +1,59 @@
-CREATE TABLE IF NOT EXISTS projects (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  deleted_at TEXT
-);
+-- YiW 桌面端 本地 SQLite schema(内置 DDL,开机 CREATE TABLE IF NOT EXISTS 自建)
+-- 自动从 local.db 导出;脱离远程 Vastbase 依赖。共 49 张表。
+-- 重新生成: node scripts/gen_schema.mjs
 
-CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  title TEXT NOT NULL DEFAULT '新对话',
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
-  message_count INTEGER NOT NULL DEFAULT 0 CHECK (message_count >= 0),
-  session_config TEXT,
-  session_summary TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  deleted_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_project_updated
-  ON sessions(project_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sessions_project_status_deleted_updated
-  ON sessions(project_id, status, deleted_at, updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS session_messages (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool')),
-  content_items TEXT NOT NULL DEFAULT '[]',
-  message_metadata TEXT,
-  sequence_number INTEGER NOT NULL CHECK (sequence_number > 0),
-  parent_message_id TEXT REFERENCES session_messages(id) ON UPDATE CASCADE ON DELETE SET NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  deleted_at TEXT
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_session_messages_sequence
-  ON session_messages(session_id, sequence_number);
-CREATE INDEX IF NOT EXISTS idx_session_messages_active_sequence
-  ON session_messages(session_id, deleted_at, sequence_number);
-
-CREATE TABLE IF NOT EXISTS agent_transcript_messages (
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE,
-  sequence_number INTEGER NOT NULL CHECK (sequence_number > 0),
-  message_json TEXT NOT NULL CHECK (json_valid(message_json)),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (session_id, sequence_number)
-);
-
-CREATE INDEX IF NOT EXISTS idx_agent_transcript_session_sequence
-  ON agent_transcript_messages(session_id, sequence_number);
-
-CREATE TABLE IF NOT EXISTS agent_transcript_state (
-  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE CASCADE,
-  source_sequence_number INTEGER NOT NULL DEFAULT 0 CHECK (source_sequence_number >= 0),
-  revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS agent_runs (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
-  skill_name TEXT,
-  mode TEXT,
-  checkpoint_json TEXT,
-  metadata_json TEXT,
-  finished_at TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_agent_runs_session_created
-  ON agent_runs(session_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_agent_runs_status_updated
-  ON agent_runs(status, updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS agent_pending_inputs (
-  id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES agent_runs(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  request_id TEXT NOT NULL UNIQUE,
-  input_type TEXT NOT NULL,
-  status TEXT NOT NULL,
-  payload_json TEXT,
-  response_json TEXT,
-  resume_handle_json TEXT,
-  resume_expires_at TEXT,
-  record_expires_at TEXT,
-  responded_at TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_agent_pending_inputs_run_status
-  ON agent_pending_inputs(run_id, status, updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS llm_models (
-  id TEXT PRIMARY KEY,
-  model_name TEXT NOT NULL,
-  display_name TEXT,
-  category TEXT NOT NULL DEFAULT 'PRIMARY' CHECK (category IN ('PRIMARY', 'SECONDARY', 'EMBEDDING')),
-  api_key TEXT,
-  api_base TEXT,
-  api_format TEXT NOT NULL DEFAULT 'chat_completions' CHECK (api_format IN ('anthropic', 'chat_completions', 'responses')),
-  is_enabled INTEGER NOT NULL DEFAULT 1 CHECK (is_enabled IN (0, 1)),
-  extra_config TEXT,
-  project_id TEXT REFERENCES projects(id) ON UPDATE CASCADE ON DELETE SET NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  deleted_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS project_model_configs (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  category TEXT NOT NULL CHECK (category IN ('PRIMARY', 'SECONDARY', 'EMBEDDING')),
-  llm_model_id TEXT NOT NULL REFERENCES llm_models(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(project_id, category)
-);
-
-CREATE INDEX IF NOT EXISTS idx_project_model_configs_model
-  ON project_model_configs(llm_model_id);
-
-CREATE TABLE IF NOT EXISTS app_skills (
-  id TEXT PRIMARY KEY,
-  skill_name TEXT NOT NULL UNIQUE,
-  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
-  default_enabled INTEGER NOT NULL DEFAULT 1 CHECK (default_enabled IN (0, 1)),
-  builtin INTEGER NOT NULL DEFAULT 0 CHECK (builtin IN (0, 1)),
-  runtime TEXT,
-  description TEXT,
-  config TEXT,
-  instructions TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  deleted_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_app_skills_active_name
-  ON app_skills(is_active, skill_name);
-
-CREATE TABLE IF NOT EXISTS project_skills (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  skill_name TEXT NOT NULL,
-  skill_id TEXT REFERENCES app_skills(id) ON UPDATE CASCADE ON DELETE SET NULL,
-  is_enabled INTEGER NOT NULL DEFAULT 1 CHECK (is_enabled IN (0, 1)),
-  enabled_override INTEGER CHECK (enabled_override IS NULL OR enabled_override IN (0, 1)),
-  config TEXT,
-  config_override TEXT,
-  skill_template TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  deleted_at TEXT,
-  UNIQUE(project_id, skill_name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_project_skills_project_enabled
-  ON project_skills(project_id, is_enabled, skill_name);
-
-CREATE TABLE IF NOT EXISTS app_mcp_providers (
-  id TEXT PRIMARY KEY,
-  provider_name TEXT NOT NULL UNIQUE,
-  transport TEXT NOT NULL,
-  command TEXT,
-  args TEXT,
-  env TEXT,
-  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
-  default_enabled INTEGER NOT NULL DEFAULT 1 CHECK (default_enabled IN (0, 1)),
-  tool_cache TEXT,
-  last_discovered_at TEXT,
-  last_error TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  deleted_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_app_mcp_providers_active_name
-  ON app_mcp_providers(is_active, provider_name);
-
-CREATE TABLE IF NOT EXISTS project_mcp_providers (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  provider_name TEXT NOT NULL,
-  provider_id TEXT REFERENCES app_mcp_providers(id) ON UPDATE CASCADE ON DELETE SET NULL,
-  is_enabled INTEGER NOT NULL DEFAULT 1 CHECK (is_enabled IN (0, 1)),
-  enabled_override INTEGER CHECK (enabled_override IS NULL OR enabled_override IN (0, 1)),
-  config TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  deleted_at TEXT,
-  UNIQUE(project_id, provider_name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_project_mcp_providers_project_enabled
-  ON project_mcp_providers(project_id, is_enabled, provider_name);
-CREATE INDEX IF NOT EXISTS idx_project_mcp_providers_provider
-  ON project_mcp_providers(provider_id);
+CREATE TABLE IF NOT EXISTS "agents" ("name" TEXT, "agent_type" TEXT, "project_id" TEXT, "business_id" TEXT, "created_by" TEXT, "model_id" TEXT, "system_prompt" TEXT, "user_prompt_template" TEXT, "rules" TEXT, "description" TEXT, "version" TEXT, "is_active" INTEGER, "is_default" INTEGER, "last_used_at" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "agent_runs" ("id" TEXT, "session_id" TEXT, "project_id" TEXT, "user_id" TEXT, "status" TEXT, "skill_name" TEXT, "mode" TEXT, "checkpoint_json" TEXT, "metadata_json" TEXT, "finished_at" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "agent_pending_inputs" ("id" TEXT, "run_id" TEXT, "session_id" TEXT, "project_id" TEXT, "user_id" TEXT, "request_id" TEXT UNIQUE, "input_type" TEXT, "status" TEXT, "payload_json" TEXT, "response_json" TEXT, "resume_handle_json" TEXT, "resume_expires_at" TEXT, "record_expires_at" TEXT, "responded_by" TEXT, "responded_at" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "alembic_version" ("version_num" TEXT, PRIMARY KEY ("version_num"));
+CREATE TABLE IF NOT EXISTS "business_api_keys" ("business_id" TEXT, "project_id" TEXT, "name" TEXT, "description" TEXT, "api_key" TEXT, "api_key_prefix" TEXT, "rate_limit" INTEGER, "valid_from" TEXT, "valid_until" TEXT, "is_active" INTEGER, "virtual_user_id" TEXT, "total_requests" INTEGER, "last_request_at" TEXT, "created_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "business_data_sources" ("business_id" TEXT, "source_type" TEXT, "source_id" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "business_entity_configs" ("business_id" TEXT, "entity_config_id" TEXT, "is_active" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "business_publish_configs" ("business_id" TEXT, "project_id" TEXT, "is_published" INTEGER, "server_name" TEXT, "server_description" TEXT, "api_key" TEXT, "api_key_prefix" TEXT, "allowed_ips" TEXT, "rate_limit" INTEGER, "total_requests" INTEGER, "last_request_at" TEXT, "created_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "businesses" ("project_id" TEXT, "name" TEXT, "description" TEXT, "created_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "column_metadata" ("table_id" TEXT, "column_name" TEXT, "data_type" TEXT, "is_nullable" INTEGER, "default_value" TEXT, "is_primary_key" INTEGER, "is_foreign_key" INTEGER, "is_unique" INTEGER, "is_indexed" INTEGER, "distinct_values" TEXT, "enum_mappings" TEXT, "description" TEXT, "keywords" TEXT, "example_values" TEXT, "is_high_recall" INTEGER, "embedding" TEXT, "embedding_model" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "companies" ("name" TEXT, "code" TEXT, "description" TEXT, "is_active" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "dashboard_panels" ("dashboard_id" TEXT, "x" INTEGER, "y" INTEGER, "w" INTEGER, "h" INTEGER, "title" TEXT, "tags" TEXT, "content_type" TEXT, "content" TEXT, "display_type" TEXT, "display_config" TEXT, "execute_type" TEXT, "execute" TEXT, "source_type" TEXT, "source_id" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "dashboards" ("project_id" TEXT, "created_by" TEXT, "title" TEXT, "description" TEXT, "layout" TEXT, "refresh_interval" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "database_connections" ("project_id" TEXT, "created_by" TEXT, "name" TEXT, "db_type" TEXT, "is_virtual" INTEGER, "host" TEXT, "port" INTEGER, "username" TEXT, "password" TEXT, "database" TEXT, "description" TEXT, "schema_config" TEXT, "extra_config" TEXT, "business_rules" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "disambiguation_resolutions" ("business_id" TEXT, "project_id" TEXT, "source_table" TEXT, "source_column" TEXT, "normalized_keyword" TEXT, "chosen_value" TEXT, "chosen_value_meta" TEXT, "hit_count" INTEGER, "last_used_at" TEXT, "created_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "entity_mapping_configs" ("database_connection_id" TEXT, "business_id" TEXT, "import_type" TEXT, "source_id" TEXT, "source_type" TEXT, "table_name" TEXT, "column_name" TEXT, "schema_name" TEXT, "config_name" TEXT, "entity_type" TEXT, "metadata_fields" TEXT, "is_active" INTEGER, "sample_entities" TEXT, "rule" TEXT, "created_at" TEXT, "updated_at" TEXT, "id" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "entity_mappings" ("business_id" TEXT, "name" TEXT, "source_id" TEXT, "source_type" TEXT, "entity_type" TEXT, "config_id" TEXT, "meta_data" TEXT, "embedding" TEXT, "embedding_model" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "examples" ("business_id" TEXT, "example_type" TEXT, "question" TEXT, "content" TEXT, "description" TEXT, "is_active" INTEGER, "source_id" TEXT, "source_type" TEXT, "embedding" TEXT, "embedding_model" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "generated_reports" ("project_id" TEXT, "report_type" TEXT, "template_id" TEXT, "business_id" TEXT, "title" TEXT, "summary" TEXT, "template_snapshot_yaml" TEXT, "payload_json" TEXT, "sections" TEXT, "html" TEXT, "metadata_json" TEXT, "status" TEXT, "created_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "invite_links" ("company_id" TEXT, "code" TEXT, "description" TEXT, "grant_admin" INTEGER, "grant_create_project" INTEGER, "max_uses" INTEGER, "used_count" INTEGER, "expires_at" TEXT, "is_active" INTEGER, "created_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "llm_call_logs" ("id" TEXT, "project_id" TEXT, "business_id" TEXT, "session_id" TEXT, "task_id" TEXT, "user_id" TEXT, "call_site" TEXT, "model_id" TEXT, "model_name" TEXT, "model_category" TEXT, "requested_role" TEXT, "prompt_tokens" INTEGER, "completion_tokens" INTEGER, "total_tokens" INTEGER, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, "cached_tokens" INTEGER, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "llm_models" ("model_name" TEXT, "display_name" TEXT, "category" TEXT, "api_key" TEXT, "api_base" TEXT, "supports_streaming" INTEGER, "dimension" INTEGER, "is_enabled" INTEGER, "company_id" TEXT, "extra_config" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, "project_id" TEXT, api_format TEXT DEFAULT 'chat_completions', PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "mcp_data_sources" ("name" TEXT, "description" TEXT, "server_url" TEXT, "transport_type" TEXT, "embedding_model_id" TEXT, "user_id" TEXT, "is_active" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "message_feedbacks" ("message_id" TEXT, "session_id" TEXT, "project_id" TEXT, "user_id" TEXT, "feedback_type" TEXT, "feedback_reason" TEXT, "user_question" TEXT, "ai_response" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "metric_definitions" ("business_id" TEXT, "name" TEXT, "description" TEXT, "aliases" TEXT, "sql_template" TEXT, "related_tables" TEXT, "related_columns" TEXT, "code_knowledge" TEXT, "embedding" TEXT, "embedding_model" TEXT, "source_id" TEXT, "source_type" TEXT, "is_active" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "metric_view_definitions" ("business_id" TEXT, "source_id" TEXT, "name" TEXT, "description" TEXT, "aliases" TEXT, "tables" TEXT, "fixed_predicates" TEXT, "query_dimensions" TEXT, "time_dimension" TEXT, "projections" TEXT, "group_by" TEXT, "sort_spec" TEXT, "embedding" TEXT, "embedding_model" TEXT, "status" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "metric_view_recommendation_tasks" ("business_id" TEXT, "project_id" TEXT, "initiated_by" TEXT, "status" TEXT, "input_params" TEXT, "candidates" TEXT, "user_selections" TEXT, "applied_view_ids" TEXT, "stats" TEXT, "error_message" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "metadata_sync_configs" ("id" TEXT, "project_id" TEXT, "database_connection_id" TEXT, "enabled" INTEGER, "skip_cron" INTEGER, "schedule_cron" TEXT, "sync_mode" TEXT, "last_run_at" TEXT, "last_status" TEXT, "last_error" TEXT, "last_auto_run_at" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "metadata_sync_audits" ("id" TEXT, "project_id" TEXT, "database_connection_id" TEXT, "trigger_source" TEXT, "status" TEXT, "tables_synced" INTEGER, "columns_synced" INTEGER, "duration_ms" INTEGER, "error_msg" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "panels" ("project_id" TEXT, "created_by" TEXT, "title" TEXT, "tags" TEXT, "content_type" TEXT, "content" TEXT, "display_type" TEXT, "display_config" TEXT, "execute_type" TEXT, "execute" TEXT, "source_type" TEXT, "source_id" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "project_invite_links" ("project_id" TEXT, "code" TEXT, "role_id" TEXT, "max_uses" INTEGER, "used_count" INTEGER, "expires_at" TEXT, "is_active" INTEGER, "created_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "project_mcp_providers" ("project_id" TEXT, "provider_name" TEXT, "transport" TEXT, "command" TEXT, "args" TEXT, "env" TEXT, "is_enabled" INTEGER, "enabled_by" TEXT, "last_discovered_at" TEXT, "last_error" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, "provider_id" TEXT, "enabled_override" INTEGER, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "project_members" ("project_id" TEXT, "user_id" TEXT, "role_id" TEXT, "is_owner" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "project_model_configs" ("project_id" TEXT, "category" TEXT, "llm_model_id" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "project_skills" ("project_id" TEXT, "skill_name" TEXT, "is_enabled" INTEGER, "config" TEXT, "enabled_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, "skill_template" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "app_skills" ("id" TEXT, "skill_name" TEXT UNIQUE, "is_active" INTEGER, "default_enabled" INTEGER, "builtin" INTEGER, "runtime" TEXT, "description" TEXT, "config" TEXT, "instructions" TEXT, "created_by" TEXT, "updated_by" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "app_mcp_providers" ("id" TEXT, "provider_name" TEXT UNIQUE, "transport" TEXT, "command" TEXT, "args" TEXT, "env" TEXT, "is_active" INTEGER, "default_enabled" INTEGER, "last_discovered_at" TEXT, "last_error" TEXT, "tool_cache" TEXT, "created_by" TEXT, "updated_by" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "projects" ("company_id" TEXT, "name" TEXT, "description" TEXT, "status" TEXT, "is_open" INTEGER, "open_role_id" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "relationship_metadata" ("database_connection_id" TEXT, "source_table_id" TEXT, "target_table_id" TEXT, "source_column" TEXT, "target_column" TEXT, "relationship_type" TEXT, "constraint_name" TEXT, "description" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "report_templates" ("project_id" TEXT, "name" TEXT, "report_type" TEXT, "description" TEXT, "yaml_spec" TEXT, "status" TEXT, "is_default" INTEGER, "version" INTEGER, "spec_version" TEXT, "config" TEXT, "created_by" TEXT, "updated_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "roles" ("company_id" TEXT, "name" TEXT, "code" TEXT, "description" TEXT, "permissions" TEXT, "is_system" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "session_messages" ("session_id" TEXT, "role" TEXT, "content_items" TEXT, "message_metadata" TEXT, "sequence_number" INTEGER, "parent_message_id" TEXT, "reply_to_message_id" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "session_shares" ("id" TEXT, "session_id" TEXT, "project_id" TEXT, "created_by" TEXT, "share_token" TEXT, "snapshot" TEXT, "is_active" INTEGER, "view_count" INTEGER, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "sessions" ("project_id" TEXT, "created_by" TEXT, "source_type" TEXT, "source_id" TEXT, "action_type" TEXT, "title" TEXT, "description" TEXT, "status" TEXT, "message_count" INTEGER, "session_config" TEXT, "session_summary" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "structured_data_sources" ("project_id" TEXT, "name" TEXT, "description" TEXT, "folder_path" TEXT, "embedding_model_id" TEXT, "is_active" INTEGER, "duckdb_path" TEXT, "database_connection_id" TEXT, "created_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "structured_documents" ("title" TEXT, "source" TEXT, "file_path" TEXT, "file_size" INTEGER, "file_ext" TEXT, "chunk_count" INTEGER, "status" TEXT, "error_msg" TEXT, "progress" INTEGER, "project_id" TEXT, "created_by" TEXT, "structured_data_source_id" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "table_metadata" ("database_connection_id" TEXT, "schema_name" TEXT, "table_name" TEXT, "table_type" TEXT, "structured_document_id" TEXT, "description" TEXT, "keywords" TEXT, "row_count" INTEGER, "data_size" INTEGER, "last_analyzed_at" TEXT, "is_view" INTEGER, "is_materialized" INTEGER, "is_partitioned" INTEGER, "is_high_recall" INTEGER, "embedding" TEXT, "embedding_model" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "tasks" ("project_id" TEXT, "session_id" TEXT, "created_by" TEXT, "task_type" TEXT, "input_data" TEXT, "status" TEXT, "result_data" TEXT, "error_message" TEXT, "progress" INTEGER, "retry_count" INTEGER, "max_retries" INTEGER, "parameters" TEXT, "execution_time" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "unstructured_contents" ("document_id" TEXT, "content_index" INTEGER, "content_size" INTEGER, "token_count" INTEGER, "embedding_content" TEXT, "embedding" TEXT, "meta_info" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "unstructured_data_sources" ("project_id" TEXT, "name" TEXT, "description" TEXT, "folder_path" TEXT, "embedding_model_id" TEXT, "is_active" INTEGER, "created_by" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "unstructured_documents" ("title" TEXT, "source" TEXT, "file_path" TEXT, "markdown_path" TEXT, "content_format" TEXT, "file_size" INTEGER, "file_ext" TEXT, "description" TEXT, "chunk_count" INTEGER, "status" TEXT, "error_msg" TEXT, "progress" INTEGER, "project_id" TEXT, "created_by" TEXT, "unstructured_data_source_id" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "user_sessions" ("user_id" TEXT, "token_jti" TEXT, "expires_at" TEXT, "ip_address" TEXT, "user_agent" TEXT, "is_active" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "users" ("company_id" TEXT, "username" TEXT, "email" TEXT, "password_hash" TEXT, "avatar_url" TEXT, "full_name" TEXT, "is_admin" INTEGER, "can_create_project" INTEGER, "is_active" INTEGER, "last_login_at" TEXT, "invite_link_id" TEXT, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));
+CREATE TABLE IF NOT EXISTS "utl_file_dir" ("dir" TEXT);
+CREATE TABLE IF NOT EXISTS "web_search_models" ("project_id" TEXT, "name" TEXT, "model" TEXT, "api" TEXT, "description" TEXT, "config_type" TEXT, "custom_config" TEXT, "is_default" INTEGER, "id" TEXT, "created_at" TEXT, "updated_at" TEXT, "deleted_at" TEXT, "deleted_by" TEXT, PRIMARY KEY ("id"));

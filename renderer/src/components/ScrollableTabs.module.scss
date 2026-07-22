@@ -1,5 +1,5 @@
 // ScrollableTabs 样式
-// 使用 el-tabs 自带的横向滚动。
+// 源组件无 <style scoped>，依赖 el-tabs 自带的 nav 横向滚动。
 // 这里为 Mantine Tabs 提供等价的横向滚动能力，并保留 --el-* 变量以对齐主题。
 .scrollableTabs {
   // 让 tab 头部不换行，配合内部 ScrollArea 横向滚动

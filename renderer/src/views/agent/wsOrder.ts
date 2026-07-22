@@ -2,9 +2,9 @@
 // 仅记录「被用户拖动过的」顺序;未在表中的工作区(新建/未拖过)回落到自然序(= 创建时间)。
 // 纯聊天(__chat__)恒在最前,不参与排序。
 import { CHAT_WS } from './folders'
-import type { Workspace } from './AgentNav'
+import type { Workspace } from './YiWNav'
 
-const KEY = 'agent-ws-order'
+const KEY = 'yiw-ws-order'
 
 export function loadWsOrder(): string[] {
   try {

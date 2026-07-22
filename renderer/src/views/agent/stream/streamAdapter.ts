@@ -1,4 +1,4 @@
-import type { AgentBlock, AgentMessage } from './types'
+import type { AgentBlock, AgentMessage, DataWorkspaceEvent } from './types'
 
 export function parseSseJsonLine(line: string): any | null {
   if (!line.startsWith('data:')) return null
@@ -46,5 +46,40 @@ export function mapServerMessage(m: any): AgentMessage {
     role: m.role === 'user' ? 'user' : 'assistant',
     blocks: allBlocks.filter((it: AgentBlock) => it?.metadata?.display !== false && it?.type !== 'skill_invocation' && it?.type !== 'workspace_event'),
     workstationBlocks: allBlocks
+  }
+}
+
+export function extractWorkspaceEvent(evt: any): DataWorkspaceEvent | null {
+  const data: DataWorkspaceEvent | null = evt?.v === 1 && evt?.type === 'workspace.updated' ? evt.payload || null : null
+  if (!data) return null
+  if (data.module_id || data.draft_id || String(data.event || '').startsWith('module_')) return data
+  const projectId = String(data?.project_id || data?.project?.id || data?.project?.project_id || '').trim()
+  if (!projectId) return null
+  return {
+    ...data,
+    project: { ...(data.project || {}), id: projectId, project_id: projectId },
+    project_id: projectId
+  }
+}
+
+export function mergeWorkspaceEvent(
+  previous: DataWorkspaceEvent | null,
+  next: DataWorkspaceEvent
+): DataWorkspaceEvent {
+  if (next.module_id || next.draft_id || String(next.event || '').startsWith('module_')) {
+    return { ...(previous || {}), ...next }
+  }
+  const projectId = String(next?.project_id || next?.project?.id || next?.project?.project_id || '').trim()
+  const keepMigrationEvent =
+    (previous?.event === 'project_created' || previous?.event === 'session_moved') &&
+    String(previous.project_id || previous.project?.id || previous.project?.project_id || '').trim() === projectId
+  return {
+    ...(previous || {}),
+    ...next,
+    event: keepMigrationEvent ? previous?.event : next.event,
+    origin_project_id: keepMigrationEvent ? previous?.origin_project_id : next.origin_project_id,
+    session_id: keepMigrationEvent ? previous?.session_id : next.session_id,
+    project: { ...(previous?.project || {}), ...(next.project || {}), id: projectId, project_id: projectId },
+    project_id: projectId
   }
 }

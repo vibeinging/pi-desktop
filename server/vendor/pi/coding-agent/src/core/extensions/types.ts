@@ -10,6 +10,7 @@
 
 import type {
 	AgentMessage,
+	AgentToolHandoff,
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
@@ -903,6 +904,8 @@ interface ToolResultEventBase {
 	input: Record<string, unknown>;
 	content: (TextContent | ImageContent)[];
 	isError: boolean;
+	handoff?: AgentToolHandoff;
+	terminate?: boolean;
 }
 
 export interface BashToolResultEvent extends ToolResultEventBase {
@@ -1070,6 +1073,9 @@ export interface ToolResultEventResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
 	isError?: boolean;
+	/** Set to null to explicitly reject an existing delegated handoff. */
+	handoff?: AgentToolHandoff | null;
+	terminate?: boolean;
 }
 
 export interface MessageEndEventResult {

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { IconCode, IconFile, IconPhoto, IconRefresh, IconSearch, IconTable } from '@tabler/icons-react'
-import { getAgentFile, listAgentFiles, type FileNode } from '@/api/agent'
+import { getAgentFile, listAgentFiles, type FileNode } from '@/api/yiw'
 import { artifactKindForPath, imageSrcFromPath } from './stream/uiCapabilities'
-import styles from './agent.module.scss'
+import styles from './yiw.module.scss'
 
 type Preview = {
   path: string

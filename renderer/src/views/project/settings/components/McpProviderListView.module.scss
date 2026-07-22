@@ -1,19 +1,19 @@
-/* Page 骨架 app-page-list / app-page-toolbar / app-page-content / app-card-grid /
-   app-grid-card / app-page-empty 等全部来自 src/styles/components.scss ——
+/* Page 骨架 ad-page-list / ad-page-toolbar / ad-page-content / ad-card-grid /
+   ad-grid-card / ad-page-empty 等全部来自 src/styles/components.scss ——
    本组件仅补 MCP 特有的卡片细节与空状态插画。 */
 
 /* ---------- MCP 卡片 ---------- */
 
 .mcpCard {
   .iconMcp {
-    color: var(--app-primary, #6b1a96);
+    color: var(--ad-primary, #17483e);
     font-size: 16px;
   }
 
   &.isDisabled {
     opacity: 0.72;
     :global(.grid-card-title) > span:first-of-type {
-      color: var(--app-text-secondary);
+      color: var(--ad-text-secondary);
     }
   }
 }
@@ -21,8 +21,8 @@
 .mcpCommand {
   font-family: 'Menlo', 'Courier New', monospace;
   font-size: 12.5px;
-  color: var(--app-text-primary);
-  background: var(--agent-code-bg, #f5f7fa);
+  color: var(--ad-text-primary);
+  background: var(--yiw-code-bg, #f5f7fa);
   padding: 8px 10px;
   border-radius: 4px;
   margin-bottom: 10px;
@@ -62,14 +62,14 @@
     margin: 0 0 10px;
     font-size: 20px;
     font-weight: 600;
-    color: var(--app-text-primary);
+    color: var(--ad-text-primary);
   }
 
   .emptyDesc {
     margin: 0 0 24px;
     font-size: 14px;
     line-height: 1.7;
-    color: var(--app-text-secondary);
+    color: var(--ad-text-secondary);
   }
 
   .emptyFeatures {
@@ -84,11 +84,11 @@
       align-items: center;
       gap: 6px;
       font-size: 13px;
-      color: var(--app-text-secondary);
+      color: var(--ad-text-secondary);
 
       :global(.el-icon),
       svg {
-        color: var(--app-primary, #6b1a96);
+        color: var(--ad-primary, #17483e);
         font-size: 15px;
       }
     }
@@ -121,21 +121,21 @@
     gap: 4px;
     width: 48px;
     padding: 8px 4px;
-    background: var(--app-bg-white);
+    background: var(--ad-bg-white);
     border: 1px solid #e4e7ed;
     border-radius: 8px;
-    box-shadow: 0 2px 6px rgba(107, 26, 150, 0.05);
+    box-shadow: 0 2px 6px rgba(23, 72, 62, 0.05);
     animation: orbit-fade 6s ease-in-out infinite;
 
     :global(.el-icon),
     svg {
-      color: var(--app-text-secondary);
+      color: var(--ad-text-secondary);
       font-size: 18px;
     }
 
     .satLabel {
       font-size: 10px;
-      color: var(--app-text-muted);
+      color: var(--ad-text-muted);
       letter-spacing: 0.02em;
     }
 
@@ -168,13 +168,13 @@
     width: 48px;
     height: 48px;
     border-radius: 50%;
-    background: var(--app-primary, #6b1a96);
+    background: var(--ad-primary, #17483e);
     display: flex;
     align-items: center;
     justify-content: center;
     box-shadow:
-      0 0 0 4px rgba(107, 26, 150, 0.12),
-      0 6px 16px rgba(107, 26, 150, 0.2);
+      0 0 0 4px rgba(23, 72, 62, 0.12),
+      0 6px 16px rgba(23, 72, 62, 0.2);
 
     :global(.el-icon),
     svg {
@@ -185,21 +185,21 @@
 }
 
 .envEyeIcon {
-  color: var(--app-text-muted);
+  color: var(--ad-text-muted);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  &:hover { color: var(--app-primary, #6b1a96); }
+  &:hover { color: var(--ad-primary, #17483e); }
 }
 
 /* =============================================
- * MCP Provider 创建向导
+ * Wizard Dialog — 对齐 DatabaseSetupGuide 样式
  * ============================================= */
 
 .setupGuide {
   display: flex;
   flex-direction: column;
-  background: var(--agent-bg, #f8f9fa);
+  background: var(--yiw-bg, #f8f9fa);
   min-height: 60vh;
   max-height: 85vh;
 }
@@ -209,19 +209,19 @@
   justify-content: flex-end;
   align-items: center;
   padding: 12px 16px;
-  background: var(--agent-surface, #fff);
-  border-bottom: 1px solid var(--agent-border, #e4e7ed);
+  background: var(--yiw-surface, #fff);
+  border-bottom: 1px solid var(--yiw-border, #e4e7ed);
 
   .closeButton {
     font-size: 18px;
-    color: var(--agent-muted, #909399);
+    color: var(--yiw-muted, #909399);
     padding: 4px;
     cursor: pointer;
     background: none;
     border: none;
     display: inline-flex;
     align-items: center;
-    &:hover { color: var(--agent-text, #303133); }
+    &:hover { color: var(--yiw-text, #303133); }
   }
 }
 
@@ -230,8 +230,8 @@
   justify-content: center;
   align-items: center;
   padding: 24px 32px;
-  background: var(--agent-surface, #fff);
-  border-bottom: 1px solid var(--agent-border, #e4e7ed);
+  background: var(--yiw-surface, #fff);
+  border-bottom: 1px solid var(--yiw-border, #e4e7ed);
 }
 
 .guideSteps {
@@ -257,22 +257,22 @@
 
   &.completed {
     .stepNumber {
-      background: var(--agent-accent, #6b1a96);
-      border-color: var(--agent-accent, #6b1a96);
-      color: var(--agent-on-accent, #fff);
+      background: var(--yiw-accent, #17483e);
+      border-color: var(--yiw-accent, #17483e);
+      color: var(--yiw-on-accent, #fff);
     }
-    .stepLabel { color: var(--agent-accent, #6b1a96); }
+    .stepLabel { color: var(--yiw-accent, #17483e); }
   }
 
   &.active {
     .stepNumber {
-      background: var(--agent-accent, #6b1a96);
-      border-color: var(--agent-accent, #6b1a96);
-      color: var(--agent-on-accent, #fff);
-      box-shadow: 0 2px 8px var(--agent-accent-tint, rgba(107, 26, 150, 0.3));
+      background: var(--yiw-accent, #17483e);
+      border-color: var(--yiw-accent, #17483e);
+      color: var(--yiw-on-accent, #fff);
+      box-shadow: 0 2px 8px var(--yiw-accent-tint, rgba(23, 72, 62, 0.3));
     }
     .stepLabel {
-      color: var(--agent-text, #303133);
+      color: var(--yiw-text, #303133);
       font-weight: 600;
     }
   }
@@ -282,20 +282,20 @@
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  border: 2px solid var(--agent-border, #dcdfe6);
-  background: var(--agent-surface, #fff);
+  border: 2px solid var(--yiw-border, #dcdfe6);
+  background: var(--yiw-surface, #fff);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 14px;
   font-weight: 600;
-  color: var(--agent-muted, #909399);
+  color: var(--yiw-muted, #909399);
   transition: all 0.3s;
 }
 
 .stepLabel {
   font-size: 14px;
-  color: var(--agent-muted, #909399);
+  color: var(--yiw-muted, #909399);
   white-space: nowrap;
   transition: all 0.3s;
 }
@@ -303,7 +303,7 @@
 .stepConnector {
   width: 40px;
   height: 2px;
-  background: var(--agent-border, #dcdfe6);
+  background: var(--yiw-border, #dcdfe6);
   margin: 0 12px;
 }
 
@@ -312,7 +312,7 @@
   min-height: 0;
   overflow: auto;
   padding: 24px 32px;
-  background: var(--agent-bg, #f8f9fa);
+  background: var(--yiw-bg, #f8f9fa);
 }
 
 /* ---------- Step panels ---------- */
@@ -328,13 +328,13 @@
   &__title {
     font-size: 18px;
     font-weight: 600;
-    color: var(--agent-text, #303133);
+    color: var(--yiw-text, #303133);
     margin: 0 0 6px;
   }
 
   &__desc {
     font-size: 13px;
-    color: var(--agent-text-soft, #606266);
+    color: var(--yiw-text-soft, #606266);
     line-height: 1.6;
     margin: 0;
   }
@@ -347,14 +347,14 @@
 .formLabel {
   display: block;
   font-size: 14px;
-  color: var(--agent-text, #303133);
+  color: var(--yiw-text, #303133);
   margin-bottom: 6px;
   font-weight: 500;
 }
 
 .fieldHint {
   font-size: 12px;
-  color: var(--agent-muted, #909399);
+  color: var(--yiw-muted, #909399);
   line-height: 1.5;
   margin-top: 4px;
 }
@@ -368,16 +368,16 @@
 
 .selectEmptyHint {
   padding: 8px 12px;
-  color: var(--agent-muted, #909399);
+  color: var(--yiw-muted, #909399);
   font-size: 12px;
 }
 
 .commandPreview {
   margin-top: 16px;
   padding: 12px 14px;
-  background: var(--agent-surface, #fff);
-  border: 1px solid var(--agent-border, #e4e7ed);
-  border-left: 3px solid var(--agent-accent, #6b1a96);
+  background: var(--yiw-surface, #fff);
+  border: 1px solid var(--yiw-border, #e4e7ed);
+  border-left: 3px solid var(--yiw-accent, #17483e);
   border-radius: 4px;
   display: flex;
   flex-direction: column;
@@ -385,27 +385,27 @@
 
   &__label {
     font-size: 12px;
-    color: var(--agent-muted, #909399);
+    color: var(--yiw-muted, #909399);
   }
 
   &__code {
     font-family: 'Courier New', monospace;
     font-size: 13px;
-    color: var(--agent-text, #303133);
+    color: var(--yiw-text, #303133);
     word-break: break-all;
   }
 
   &__note {
     font-size: 12px;
-    color: var(--agent-accent, #6b1a96);
+    color: var(--yiw-accent, #17483e);
   }
 }
 
 /* ---------- Step 2 env editor ---------- */
 
 .envEditor {
-  background: var(--agent-surface, #fff);
-  border: 1px solid var(--agent-border, #e4e7ed);
+  background: var(--yiw-surface, #fff);
+  border: 1px solid var(--yiw-border, #e4e7ed);
   border-radius: 4px;
   padding: 16px;
 }
@@ -415,9 +415,9 @@
   grid-template-columns: 220px 1fr 40px;
   gap: 12px;
   font-size: 12px;
-  color: var(--agent-muted, #909399);
+  color: var(--yiw-muted, #909399);
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--agent-border, #e4e7ed);
+  border-bottom: 1px solid var(--yiw-border, #e4e7ed);
   margin-bottom: 8px;
 }
 
@@ -441,19 +441,19 @@
 /* 简洁的 env 空状态，不再用 el-empty */
 .envEmpty {
   padding: 24px 20px;
-  background: var(--agent-surface, #fff);
-  border: 1px dashed var(--agent-border, #e4e7ed);
+  background: var(--yiw-surface, #fff);
+  border: 1px dashed var(--yiw-border, #e4e7ed);
   border-radius: 4px;
   text-align: center;
 
   &__line {
     font-size: 14px;
-    color: var(--app-text-secondary);
+    color: var(--ad-text-secondary);
     margin: 0 0 4px;
   }
   &__hint {
     font-size: 12px;
-    color: var(--app-text-muted);
+    color: var(--ad-text-muted);
     margin: 0;
   }
 }
@@ -466,15 +466,15 @@
   border-radius: 4px;
   transition: background-color 160ms ease;
   &:hover {
-    background: var(--agent-accent-tint, rgba(107, 26, 150, 0.06));
+    background: var(--yiw-accent-tint, rgba(23, 72, 62, 0.06));
   }
 }
 
 /* ---------- Args editor (row-based) ---------- */
 
 .argsEditor {
-  background: var(--agent-surface, #fff);
-  border: 1px solid var(--agent-border, #e4e7ed);
+  background: var(--yiw-surface, #fff);
+  border: 1px solid var(--yiw-border, #e4e7ed);
   border-radius: 4px;
   padding: 12px;
 }
@@ -484,9 +484,9 @@
   grid-template-columns: 180px 1fr 40px;
   gap: 12px;
   font-size: 12px;
-  color: var(--agent-muted, #909399);
+  color: var(--yiw-muted, #909399);
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--agent-border, #e4e7ed);
+  border-bottom: 1px solid var(--yiw-border, #e4e7ed);
   margin-bottom: 8px;
 }
 
@@ -519,15 +519,15 @@
 
 .configRecap {
   margin-bottom: 20px;
-  background: var(--agent-surface, #fff);
-  border: 1px solid var(--agent-border, #e4e7ed);
+  background: var(--yiw-surface, #fff);
+  border: 1px solid var(--yiw-border, #e4e7ed);
   border-radius: 4px;
   overflow: hidden;
 }
 
 .recapRow {
   display: flex;
-  border-bottom: 1px solid var(--agent-border, #e4e7ed);
+  border-bottom: 1px solid var(--yiw-border, #e4e7ed);
   font-size: 13px;
   &:last-child { border-bottom: none; }
 }
@@ -536,31 +536,31 @@
   width: 140px;
   flex-shrink: 0;
   padding: 8px 12px;
-  background: var(--agent-code-bg, #fafafa);
-  color: var(--agent-text-soft, #606266);
-  border-right: 1px solid var(--agent-border, #e4e7ed);
+  background: var(--yiw-code-bg, #fafafa);
+  color: var(--yiw-text-soft, #606266);
+  border-right: 1px solid var(--yiw-border, #e4e7ed);
   font-weight: 500;
 }
 
 .recapValue {
   flex: 1;
   padding: 8px 12px;
-  color: var(--agent-text, #303133);
+  color: var(--yiw-text, #303133);
 }
 
 .codeInline {
   font-family: 'Courier New', monospace;
   font-size: 12.5px;
-  background: var(--agent-code-bg, #f4f4f5);
+  background: var(--yiw-code-bg, #f4f4f5);
   padding: 2px 6px;
   border-radius: 3px;
-  color: var(--agent-text, #303133);
+  color: var(--yiw-text, #303133);
   word-break: break-all;
 }
 
 .testStage {
-  background: var(--agent-surface, #fff);
-  border: 1px solid var(--agent-border, #e4e7ed);
+  background: var(--yiw-surface, #fff);
+  border: 1px solid var(--yiw-border, #e4e7ed);
   border-radius: 4px;
   padding: 20px;
 }
@@ -571,7 +571,7 @@
   padding: 32px 16px;
 
   .stageIcon {
-    color: var(--agent-accent, #6b1a96);
+    color: var(--yiw-accent, #17483e);
     margin-bottom: 12px;
 
     &--spin { animation: rotate 1s linear infinite; }
@@ -580,13 +580,13 @@
   h4 {
     font-size: 16px;
     font-weight: 600;
-    color: var(--agent-text, #303133);
+    color: var(--yiw-text, #303133);
     margin: 0 0 6px;
   }
 
   .stageSub {
     font-size: 13px;
-    color: var(--agent-text-soft, #606266);
+    color: var(--yiw-text-soft, #606266);
     margin: 0 0 16px;
   }
 }
@@ -613,19 +613,19 @@
 
   th {
     text-align: left;
-    color: var(--agent-muted, #909399);
+    color: var(--yiw-muted, #909399);
     font-weight: 500;
     padding: 6px 8px;
-    border-bottom: 1px solid var(--agent-border, #e4e7ed);
+    border-bottom: 1px solid var(--yiw-border, #e4e7ed);
   }
   td {
     padding: 6px 8px;
-    border-bottom: 1px solid var(--agent-border-soft, #f0f0f0);
+    border-bottom: 1px solid var(--yiw-border-soft, #f0f0f0);
     vertical-align: top;
   }
   .descText {
     font-size: 13px;
-    color: var(--agent-text-soft, #606266);
+    color: var(--yiw-text-soft, #606266);
   }
 }
 
@@ -651,8 +651,8 @@
   align-items: center;
   gap: 12px;
   padding: 16px 32px;
-  background: var(--agent-surface, #fff);
-  border-top: 1px solid var(--agent-border, #e4e7ed);
+  background: var(--yiw-surface, #fff);
+  border-top: 1px solid var(--yiw-border, #e4e7ed);
 }
 
 .footerSpacer {
@@ -662,7 +662,7 @@
 
 .footerNote {
   font-size: 12px;
-  color: var(--agent-muted, #909399);
+  color: var(--yiw-muted, #909399);
 }
 
 /* ---------- Responsive ---------- */

@@ -1,4 +1,4 @@
-// 通用工具集（非组件，不引入 React hooks）。
+// 通用工具集(非组件,不引入 React hooks)。对齐原 Vue 工程 hooks/use-common.js。
 import { notifications } from '@mantine/notifications'
 
 // 非组件环境的 i18n：t/langTitle 直接复用 @/lang

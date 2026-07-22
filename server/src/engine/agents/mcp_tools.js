@@ -1,7 +1,4 @@
 import { createHash } from "node:crypto";
-import { resolveCredentialMap } from "../../credentials.js";
-import { APP_VERSION } from "../../version.js";
-import { APP_CONFIG } from "../../generated/app-config.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -165,17 +162,29 @@ function normalizeToolResult(result) {
   return content;
 }
 
-async function listAllTools(connection) {
+export async function listAllMcpTools(connection) {
   const allTools = [];
+  const seenCursors = new Set();
   let cursor;
+  let pageCount = 0;
   do {
+    if (pageCount >= 20) throw new Error("MCP 工具分页超过 20 页，已停止读取");
+    if (cursor && seenCursors.has(cursor)) throw new Error("MCP 工具分页游标重复，已停止读取");
+    if (cursor) seenCursors.add(cursor);
     const result = await connection.client.listTools(cursor ? { cursor } : undefined, {
       timeout: connection.timeoutMs,
     });
     allTools.push(...(result.tools || []));
+    if (allTools.length > 2_000) throw new Error("MCP Provider 工具数量超过 2000 个");
     cursor = result.nextCursor;
+    pageCount += 1;
   } while (cursor);
   return allTools;
+}
+
+export function mcpToolIsReadOnly(tool) {
+  const annotations = tool?.annotations || {};
+  return annotations.readOnlyHint === true && annotations.destructiveHint !== true;
 }
 
 function resultErrorText(result) {
@@ -327,10 +336,9 @@ export async function connectMcpProvider(provider, options = {}) {
   const normalized = normalizeMcpProviderRow(provider);
   if (!normalized?.command) throw new Error("MCP Provider 缺少 command");
   if (normalized.transport !== "stdio") throw new Error(`暂不支持的 MCP transport: ${normalized.transport}`);
-  normalized.env = await resolveCredentialMap(normalized.env);
 
   const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_TIMEOUT_MS;
-  const client = new Client({ name: APP_CONFIG.shortName, version: APP_VERSION });
+  const client = new Client({ name: "yiw", version: "0.0.1" });
   const stderrChunks = [];
   const transport = new StdioClientTransport({
     command: normalized.command,
@@ -362,13 +370,14 @@ export async function closeMcpConnection(connection) {
 export async function discoverMcpProviderTools(provider, options = {}) {
   const connection = await connectMcpProvider(provider, options);
   try {
-    const allTools = await listAllTools(connection);
+    const allTools = await listAllMcpTools(connection);
     return {
       provider: connection.provider,
       tools: allTools.map((tool) => ({
         name: tool.name,
         description: tool.description || "",
         inputSchema: normalizeInputSchema(tool.inputSchema),
+        annotations: tool.annotations || null,
       })),
     };
   } finally {
@@ -468,7 +477,7 @@ function createSessionMcpRuntime({ db, projectId, sessionId, timeoutMs, streamCa
       try {
         const connection = await connectMcpProvider(provider, { timeoutMs: currentTimeoutMs });
         connections.push(connection);
-        const discoveredTools = await listAllTools(connection);
+        const discoveredTools = await listAllMcpTools(connection);
         for (const tool of discoveredTools) {
           let safeName = safeToolName(provider.provider_name, tool.name);
           if (usedToolNames.has(safeName)) {

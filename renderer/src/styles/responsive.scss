@@ -2,7 +2,7 @@
  * 响应式适配基础设施
  *
  * 断点定义、响应式 mixin、设备检测、工具类
- * 通过 Vite additionalData 全局注入，所有样式文件可直接使用 mixin
+ * 通过 vite additionalData 全局注入，所有 .vue 文件可直接使用 mixin
  * 工具类通过 index.scss 引入，全局可用
  */
 

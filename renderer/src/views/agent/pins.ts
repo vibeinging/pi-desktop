@@ -1,5 +1,5 @@
 // 置顶(工作区 / 对话)—— 纯前端持久化到 localStorage。
-const KEY = 'agent-pins'
+const KEY = 'yiw-pins'
 
 export interface Pins {
   ws: string[] // 置顶的工作区 id

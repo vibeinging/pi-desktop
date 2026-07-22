@@ -4,17 +4,17 @@ import { useBasicStore } from '@/store/basic'
 import { useConfigStore } from '@/store/config'
 import i18n from '@/lang'
 
-/** 请求错误统一显示通知 */
+/** 业务错误统一弹 toast（替代 element-plus ElMessage.error） */
 const errorToast = (message: string) => {
   notifications.show({ color: 'red', message, autoClose: 2000 })
 }
 
-// 请求层扩展配置。
+// 扩展配置：保留原工程的 ignoreCode / ignoreMsg / isNotTipErrorMsg 语义
 export interface ReqConfig extends AxiosRequestConfig {
   ignoreCode?: number | number[]
   ignoreMsg?: boolean
   isNotTipErrorMsg?: boolean
-  /** 跳过全局 loading 遮罩。 */
+  /** 业务侧自定义标记：跳过全局 loading 遮罩(对齐原工程) */
   ignoreLoading?: boolean
 }
 
@@ -88,6 +88,11 @@ const ipcAdapter = async (config: any) => {
     if (body != null && !headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'application/json'
   }
 
+  // 裸 axios 调用(下载等直调,绕过 service 拦截器)在此兜底加 token
+  if (!headers['Authorization'] && !headers['authorization']) {
+    const token = useBasicStore.getState().token
+    if (token) headers['Authorization'] = `Bearer ${token}`
+  }
   const r = await ea.apiRequest({ method: (config.method || 'get').toUpperCase(), url: _ipcPath(config), headers, body, bodyEncoding })
 
   let data: any
@@ -124,18 +129,20 @@ axios.defaults.adapter = ipcAdapter
 service.interceptors.request.use(
   (req) => {
     const basicStore = useBasicStore.getState()
+    const token = basicStore.token
 
     req.cancelToken = new axios.CancelToken((cancel) => {
       tempReqUrlSave = req.url || ''
       basicStore.axiosPromiseArr.push({ url: req.url, cancel })
     })
 
+    if (token && !req.headers.Authorization) {
+      req.headers.Authorization = `Bearer ${token}`
+    }
+
     const configStore = useConfigStore.getState()
     const langMap: Record<string, string> = { zh: 'zh-CN', en: 'en-US' }
     req.headers['Accept-Language'] = langMap[configStore.language] || 'zh-CN'
-    // 仅浏览器 + Vite proxy 调试路径使用；Electron 正式路径走进程 IPC，不需要业务登录或 HTTP token。
-    const localHttpToken = String(import.meta.env.VITE_PI_HTTP_TOKEN || '').trim()
-    if (!(window as any).electronAPI && localHttpToken) req.headers['X-PI-Desktop-Token'] = localHttpToken
 
     if ('get'.includes((req.method || '').toLowerCase()) && !req.params) req.params = req.data
     return req

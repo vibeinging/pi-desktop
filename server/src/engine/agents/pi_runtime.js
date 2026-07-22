@@ -33,13 +33,7 @@ export function positiveInt(value, fallback = undefined) {
 export function normalizePiUsageForTrace(usage) {
   const normalized = normalizeTokenUsage(usage);
   if (!normalized) return null;
-  if (
-    !normalized.total_tokens
-    && !normalized.reasoning_tokens
-    && !normalized.cached_tokens
-    && !normalized.cache_write_tokens
-    && !normalized.cost_usd
-  ) return null;
+  if (!normalized.total_tokens && !normalized.cached_tokens && !normalized.cache_write_tokens && !normalized.cost_usd) return null;
   return normalized;
 }
 
@@ -235,7 +229,7 @@ export function createPiStreamFn({
     const callerOnPayload = options?.onPayload;
     return baseStreamFn(model, context, {
       ...options,
-      apiKey: apiKey || "unused",
+      apiKey,
       ...(Number(timeoutMs) > 0 ? { timeoutMs: Number(timeoutMs) } : {}),
       ...(cacheRetention && !options?.cacheRetention ? { cacheRetention } : {}),
       onPayload: async (payload, currentModel) => {

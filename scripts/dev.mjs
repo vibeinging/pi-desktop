@@ -6,12 +6,13 @@ import process from 'node:process'
 import { existsSync } from 'node:fs'
 
 const APP_DIR = dirname(dirname(fileURLToPath(import.meta.url)))
-const CUSTOM_RENDERER_URL = process.env.PI_DEV_URL
+const CUSTOM_RENDERER_URL = process.env.YIW_DEV_URL
+const NATIVE_NPM_SCRIPT = join(APP_DIR, 'scripts', 'native-npm.mjs')
 
 function resolveRendererPort() {
-  const explicitPort = Number(process.env.PI_RENDERER_PORT)
+  const explicitPort = Number(process.env.YIW_RENDERER_PORT)
   if (Number.isInteger(explicitPort) && explicitPort > 0) return explicitPort
-  return 52731
+  return 57131
 }
 
 let RENDERER_PORT = resolveRendererPort()
@@ -108,26 +109,31 @@ function nativeArch(filePath) {
     const out = execFileSync('file', [filePath], { encoding: 'utf8' })
     if (out.includes('arm64')) return 'arm64'
     if (out.includes('x86_64')) return 'x64'
-  } catch { /* ignore */ }
+  } catch {
+    // ignore
+  }
   return ''
 }
 
 function nodeArch(nodePath) {
-  try { return execFileSync(nodePath, ['-p', 'process.arch'], { encoding: 'utf8' }).trim() }
-  catch { return '' }
+  try {
+    return execFileSync(nodePath, ['-p', 'process.arch'], { encoding: 'utf8' }).trim()
+  } catch {
+    return ''
+  }
 }
 
 function resolveBackendNode() {
-  if (process.env.PI_NODE_BIN && existsSync(process.env.PI_NODE_BIN)) return process.env.PI_NODE_BIN
+  if (process.env.YIW_NODE_BIN && existsSync(process.env.YIW_NODE_BIN)) return process.env.YIW_NODE_BIN
   const targetArch = nativeArch(SERVER_NATIVE_SQLITE)
   if (!targetArch) return process.execPath
   const candidates = [
     process.execPath,
-    ...String(process.env.PATH || '').split(delimiter).map((dir) => join(dir, process.platform === 'win32' ? 'node.exe' : 'node')),
+    ...String(process.env.PATH || '').split(delimiter).map((dir) => join(dir, 'node')),
     '/opt/homebrew/bin/node',
-    '/usr/local/bin/node'
-  ].filter((item, index, all) => item && existsSync(item) && all.indexOf(item) === index)
-  return candidates.find((item) => nodeArch(item) === targetArch) || process.execPath
+    '/usr/local/bin/node',
+  ].filter((p, i, arr) => p && existsSync(p) && arr.indexOf(p) === i)
+  return candidates.find((p) => nodeArch(p) === targetArch) || process.execPath
 }
 
 function waitForChildExit(child, timeoutMs) {
@@ -179,7 +185,7 @@ const rendererPortOpen = CUSTOM_RENDERER_URL ? true : await isPortOpen(RENDERER_
 const rendererAlreadyRunning = CUSTOM_RENDERER_URL ? true : rendererPortOpen && await isRendererHealthy(RENDERER_PORT)
 
 if (CUSTOM_RENDERER_URL) {
-  console.log(`[dev] 使用 PI_DEV_URL: ${RENDERER_URL}`)
+  console.log(`[dev] 使用 YIW_DEV_URL: ${RENDERER_URL}`)
 } else if (!rendererAlreadyRunning) {
   if (rendererPortOpen) {
     const nextPort = await findFreePort(RENDERER_PORT + 1)
@@ -187,7 +193,7 @@ if (CUSTOM_RENDERER_URL) {
     RENDERER_PORT = nextPort
     RENDERER_URL = `http://127.0.0.1:${RENDERER_PORT}`
   }
-  run('renderer', 'npm', ['run', 'dev', '--', '--host', '127.0.0.1'], {
+  run('renderer', process.execPath, [NATIVE_NPM_SCRIPT, 'run', 'dev', '--', '--host', '127.0.0.1'], {
     cwd: join(APP_DIR, 'renderer'),
     env: { VITE_APP_DEV_PORT: String(RENDERER_PORT), VITE_DEV_PORT: String(RENDERER_PORT) }
   })
@@ -200,8 +206,8 @@ if (CUSTOM_RENDERER_URL) {
   console.log(`[dev] renderer 已在 ${RENDERER_URL} 运行，复用现有服务`)
 }
 
-run('electron', 'npm', ['run', 'dev'], {
+run('electron', process.execPath, [NATIVE_NPM_SCRIPT, 'run', 'dev'], {
   cwd: join(APP_DIR, 'electron'),
-  env: { PI_DEV_URL: RENDERER_URL, PI_NODE_BIN: resolveBackendNode() },
+  env: { YIW_DEV_URL: RENDERER_URL, YIW_NODE_BIN: resolveBackendNode() },
   exitOnClose: true
 })

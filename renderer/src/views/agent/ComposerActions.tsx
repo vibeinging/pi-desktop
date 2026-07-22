@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { IconAt, IconHash, IconPaperclip, IconPlus } from '@tabler/icons-react'
 import { basename, folderPathOf, isDesktop, pickFilesOrFolders, workspacePath } from './folders'
 import MentionPicker, { type PickItem, type PickMode } from './MentionPicker'
-import styles from './agent.module.scss'
+import styles from './yiw.module.scss'
 
 export interface Attachment {
   path: string

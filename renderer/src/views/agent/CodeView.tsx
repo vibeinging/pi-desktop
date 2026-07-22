@@ -2,7 +2,7 @@
 import { useMemo } from 'react'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
-import styles from './agent.module.scss'
+import styles from './yiw.module.scss'
 
 const langFromPath = (p?: string): string | undefined => {
   const ext = (p || '').split('.').pop()?.toLowerCase()

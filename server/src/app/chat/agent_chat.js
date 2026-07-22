@@ -1,176 +1,508 @@
-import { randomUUID } from 'node:crypto';
-import { ApiError } from '../../errors.js';
-import { WorkspaceAgent } from '../../engine/agents/workspace_agent.js';
-import { createStreamEvent, StreamEventType, StreamVisibility } from '../../transport/agent_stream_protocol.js';
-import { pendingDecisions } from './agent_misc.js';
-import { persistSessionMessage } from '../session/index.js';
-import { withSessionLock } from '../../engine/agents/sessionStore.js';
-import { runWithTraceContext } from '../../engine/trace/trace_context.js';
-import { createYiTraceRecorder } from '../observability/providers/yitrace/provider.js';
+/**
+ * L1 用例层 — 工作台 Agent 对话入口流式(抽自 routes/agent_chat.js 的 SSE chat 端点)。
+ *
+ * 流式签名:async fn(ctx, input, emit) —— emit(obj) 由 transport 加 `data:`+`\n\n` 帧。
+ *   - 源里每个 sse(res, obj) → emit(obj)。
+ *   - [DONE] / res.end() 由 transport 统一收尾,本文件不发。
+ *   - 错误直接 throw(transport emit {type:'complete',status:'failed'} + [DONE] + end)。
+ *   - 断连清理(原 res.on('close'))→ 监听 ctx.signal 的 'abort':abort agent + 释放待决 toolCallId。
+ *
+ * 命名空间:复用 sessions / session_messages,普通工作台和 Skill Product 使用不同 action_type。
+ * 契约:Agent Stream v1 events → "data: [DONE]"
+ *
+ * 治理确认共享态(pendingDecisions)抽到 agent_misc.js,与 /tool-decision 端点共用同一 Map。
+ *
+ * 注:app/chat/ 比 routes/ 深一层 → engine 用 ../../engine。
+ */
+import { randomUUID } from "node:crypto";
+import { ApiError } from "../../errors.js";
+import { WorkspaceAgent } from "../../engine/agents/workspace_agent.js";
+import { runAgent } from "../../engine/core/base_agent.js";
+import { isSkillEnabledForWorkspace } from "../../engine/agents/pi_skill_registry.js";
+import { resolveInstalledSkillProduct } from "../../engine/modules/skill_product.js";
+import { resolveMiniAppAgentCommand } from "../../engine/modules/module_registry.js";
 import {
-  buildAttachmentContextMessage,
-  buildUserContentItems,
-  normalizeMessageAttachments,
-} from './message_blocks.js';
+  applyUserInputToolResultResume,
+  buildUserInputContinuationMessage,
+  createAgentRuntime,
+  resolvePendingUserInput,
+} from "../../engine/agents/suspended_run_runtime.js";
+import { isAskDataProjectWorkspaceId as isRegularProjectWorkspace } from "../../engine/agents/workspace_context.js";
+import { createAgentStreamEmitter } from "../../engine/stream/agent_stream_emitter.js";
+import { runWithTraceContext } from "../../engine/trace/trace_context.js";
+import { createTraceRecorder } from "../traces/yitrace_service.js";
+import { pendingDecisions } from "./agent_misc.js";
+import { buildAttachmentContextMessage, buildUserContentItems, normalizeMessageAttachments } from "./message_blocks.js";
 
-export async function agentChat(ctx, input, emit) {
-  return withSessionLock(
-    input.params.sid,
-    () => runAgentChat(ctx, input, emit),
-    { signal: ctx.signal },
-  );
+const LEGACY_SERVICE_SKILL_NAMES = new Set(["smart_query", "project_data_query", "query_project_data", "workspace"]);
+
+function selectExplicitPromptSkill(body, question, { resume = false } = {}) {
+  const requested = String(body?.skill || "").trim();
+  const skillName = requested && !LEGACY_SERVICE_SKILL_NAMES.has(requested) ? requested : null;
+  return {
+    skill_name: skillName,
+    runtime: skillName ? "prompt" : null,
+    reason: skillName ? (resume ? "resume_user_input" : "explicit_skill") : "workspace_agent",
+    normalized_message: question,
+  };
 }
 
-async function runAgentChat(ctx, input, emit) {
-  const projectId = input.params.pid;
-  const sessionId = input.params.sid;
-  const message = String(input.body?.message || '').trim();
-  const attachments = normalizeMessageAttachments(input.body?.attachments);
-  if (!message && !attachments.length) throw new ApiError('请输入内容');
-  const session = await ctx.queryOne(
-    'SELECT * FROM sessions WHERE id=$1 AND project_id=$2 AND deleted_at IS NULL',
-    [sessionId, projectId],
+// POST /api/agent/projects/:pid/sessions/:sid/chat — 工作台 Agent 对话(流式)
+export async function agentChat(ctx, input, emit) {
+  if (ctx.signal?.aborted) return;
+  const { query, queryOne, transaction } = ctx;
+  const { pid, sid } = input.params;
+  const body = input.body || {};
+  const rawQuestion = body.message || body.question || body.content || "";
+  const attachments = normalizeMessageAttachments(body.attachments);
+  const controlPlane = input.controlPlaneAction?.type === "pending_action";
+  const userInputResponse = input.pendingUserInputResponse && typeof input.pendingUserInputResponse === "object"
+    ? input.pendingUserInputResponse
+    : null;
+  const resumeHandle = userInputResponse?.resume_handle && typeof userInputResponse.resume_handle === "object"
+    ? userInputResponse.resume_handle
+    : null;
+  const responseRequestId = String(userInputResponse?.request_id || resumeHandle?.request_id || "").trim();
+  const responseRunId = String(userInputResponse?.run_id || resumeHandle?.run_id || "").trim();
+  const question = userInputResponse ? String(userInputResponse.value || rawQuestion || "") : rawQuestion;
+  const displayQuestion = typeof body.display_message === "string" ? body.display_message : question;
+  const userId = ctx.userId || "";
+  const sessionMeta = await queryOne(
+    `SELECT id,project_id,created_by,action_type FROM sessions
+      WHERE id=$1 AND project_id=$2 AND created_by=$3 AND deleted_at IS NULL LIMIT 1`,
+    [sid, pid, userId],
   );
-  if (!session) throw new ApiError('会话不存在', 404);
-
-  const runId = randomUUID();
-  const messageId = randomUUID();
-  let seq = 0;
-  const assistantBlocks = new Map();
-  const userMessage = await persistSessionMessage(ctx, {
-    sessionId,
-    role: 'user',
-    contentItems: buildUserContentItems(message, attachments),
-    metadata: attachments.length ? { attachments } : {},
-  });
-  const userMessageId = userMessage.id;
-  await ctx.query(
-    'INSERT INTO agent_runs (id,session_id,project_id,status,mode) VALUES ($1,$2,$3,$4,$5)',
-    [runId, sessionId, projectId, 'running', 'workspace'],
-  );
-  const trace = createYiTraceRecorder({
-    projectId,
-    sessionId,
-    runId,
-    mode: 'workspace',
-    question: buildAttachmentContextMessage(message, attachments),
-  });
-  emit(createStreamEvent({ type: StreamEventType.RUN_STARTED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.HIDDEN, payload: { status: 'running' } }));
-
-  const answerText = () => [...assistantBlocks.values()].map((block) => block.content || '').filter(Boolean).join('\n\n');
-
-  const callback = async (content, meta = {}) => {
-    const type = meta.content_type || 'markdown';
-    const blockId = String(meta.content_id || randomUUID());
-    if (['markdown', 'text'].includes(type) && content) assistantBlocks.set(blockId, { type, content: String(content) });
-    if (type === 'plan') {
-      let steps = [];
-      try { steps = JSON.parse(content); } catch { /* keep empty */ }
-      emit(createStreamEvent({ type: StreamEventType.PLAN_UPDATED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.SECONDARY, payload: { steps } }));
+  if (!sessionMeta) throw new ApiError("会话不存在或无权限", 404);
+  if (isRegularProjectWorkspace(pid)) {
+    const member = await queryOne(
+      `SELECT 1 AS allowed FROM projects p
+        JOIN project_members pm ON pm.project_id=p.id AND pm.user_id=$2 AND pm.deleted_at IS NULL
+        WHERE p.id=$1 AND p.deleted_at IS NULL LIMIT 1`,
+      [pid, userId],
+    );
+    if (!member) throw new ApiError("项目不存在或无权限", 404);
+  }
+  const productRequest = Boolean(body.module_id);
+  if (sessionMeta.action_type === "skill_product" && !productRequest) {
+    throw new ApiError("Skill Product 会话必须从对应产品中继续", 409);
+  }
+  if (productRequest && sessionMeta.action_type !== "skill_product") {
+    throw new ApiError("Skill Product 必须使用专属产品会话", 409);
+  }
+  const persistSimpleTurn = async (items = []) => {
+    try {
+      const seqRow = await queryOne(
+        `SELECT COALESCE(MAX(sequence_number),0) AS m FROM session_messages WHERE session_id=$1`,
+        [sid],
+      ).catch(() => ({ m: 0 }));
+      let seq = Number(seqRow?.m || 0);
+      if (!controlPlane) {
+        await query(
+          `INSERT INTO session_messages (id,session_id,role,content_items,sequence_number,created_at,updated_at)
+           VALUES ($1,$2,'user',$3,$4,now(),now())`,
+          [randomUUID(), sid, JSON.stringify(buildUserContentItems(displayQuestion, attachments)), ++seq],
+        ).catch(() => {});
+      }
+      await query(
+        `INSERT INTO session_messages (id,session_id,role,content_items,sequence_number,created_at,updated_at)
+         VALUES ($1,$2,'assistant',$3,$4,now(),now())`,
+        [randomUUID(), sid, JSON.stringify(items), ++seq],
+      ).catch(() => {});
+      await query(
+        `UPDATE sessions SET updated_at=now(), message_count=COALESCE(message_count,0)+$2 WHERE id=$1`,
+        [sid, controlPlane ? 1 : 2],
+      ).catch(() => {});
+    } catch {
+      /* 持久化失败不阻断本轮返回 */
+    }
+  };
+  const emitDisambiguationAck = async (choice, resolvedInput = null, { complete = true } = {}) => {
+    const runId = resolvedInput?.run_id || responseRunId || randomUUID();
+    const stream = createAgentStreamEmitter({ emit, runId, sessionId: sid });
+    stream.runStarted({ mode: "agent", skill: null, content: "正在记录选择…" });
+    const chosen = String(choice?.chosen_value || question || "").trim();
+    if (resolvedInput?.status === "expired") {
+      stream.runExpired({ request_id: responseRequestId, value: chosen });
+      const pushed = stream.content(`这个确认已过期，已收到「${chosen}」，请重新发起或继续原问题。`, {
+        content_id: randomUUID(),
+        content_type: "markdown",
+        title: "确认已过期",
+        display: true,
+      });
+      stream.runCompleted({ status: "failed", message: "确认已过期" });
+      await persistSimpleTurn([pushed.item]);
       return;
     }
-    if (type === 'tool') {
-      emit(createStreamEvent({ type: meta.title === 'error' ? StreamEventType.TOOL_FAILED : meta.title === 'done' ? StreamEventType.TOOL_COMPLETED : StreamEventType.TOOL_STARTED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.SECONDARY, payload: { tool_call_id: blockId, name: meta.tool_name, status: meta.title, args_preview: content } }));
-      return;
-    }
-    if (type === 'tool_result') {
-      emit(createStreamEvent({ type: StreamEventType.TOOL_OUTPUT, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.SECONDARY, payload: { tool_call_id: blockId, name: meta.tool_name, result_preview: content } }));
-      return;
-    }
-    emit(createStreamEvent({
-      type: StreamEventType.MESSAGE_DELTA,
-      runId, sessionId, messageId, seq: ++seq,
-      visibility: type === 'thinking' ? StreamVisibility.SECONDARY : StreamVisibility.PRIMARY,
-      payload: { block_id: blockId, channel: type === 'thinking' ? 'thinking' : 'answer', format: type, mode: 'replace', content, title: meta.title, usage: meta.usage, model: meta.model },
-    }));
+    stream.runResumed({
+      request_id: responseRequestId,
+      mode: resolvedInput?.recorded ? "handle" : "stateless",
+      resume_handle: resolvedInput?.resume_handle || resumeHandle || null,
+    });
+    stream.userInputResolved({
+      request_id: responseRequestId,
+      value: chosen,
+      status: "answered",
+      run_id: runId,
+    });
+    if (!complete) return;
+    const pushed = stream.content(`已选择「${chosen}」。`, {
+      content_id: randomUUID(),
+      content_type: "markdown",
+      title: "选择已记录",
+      display: true,
+    });
+    stream.runCompleted({ status: "completed", message: "选择已记录" });
+    await persistSimpleTurn([pushed.item]);
   };
 
-  try {
-    const agent = await WorkspaceAgent.create();
-    const result = await runWithTraceContext(trace, () => agent.execute({
-        project_id: projectId,
-        session_id: sessionId,
-        input_data: {
-          user_message: buildAttachmentContextMessage(message, attachments),
-          raw_user_message: message,
-          attachments,
+  const emitPendingActionFailure = async (resolvedInput, chosen) => {
+    const runId = resolvedInput?.run_id || responseRunId || randomUUID();
+    const stream = createAgentStreamEmitter({ emit, runId, sessionId: sid });
+    const status = String(resolvedInput?.status || "missing");
+    stream.runStarted({ mode: "agent", skill: null, content: "确认无法恢复" });
+    if (status === "expired") {
+      stream.runExpired({ request_id: responseRequestId, value: chosen });
+    }
+    stream.userInputResolved({
+      request_id: responseRequestId,
+      value: chosen,
+      status: status === "expired" ? "expired" : "failed",
+      run_id: runId,
+    });
+    const message =
+      status === "expired"
+        ? `这个确认已过期，已收到「${chosen}」，请重新发起或继续原问题。`
+        : status === "mismatched"
+          ? "这个确认不属于当前挂起任务，请刷新会话后重试。"
+          : "这个确认已失效或不存在，请重新发起任务。";
+    const pushed = stream.content(`⚠️ ${message}`, {
+      content_id: randomUUID(),
+      content_type: "markdown",
+      title: "确认失败",
+      display: true,
+    });
+    stream.runCompleted({ status: "failed", message: "确认无法恢复" });
+    await persistSimpleTurn([pushed.item]);
+  };
+
+  const continueResolvedUserInput = async (resolvedInput, choice) => {
+    if (resolvedInput?.status !== "answered" || !resolvedInput?.recorded) return false;
+    const checkpoint = resolvedInput.checkpoint || {};
+    const originalMessage = checkpoint.original_user_message || checkpoint.enhanced_user_query || "";
+    if (!String(originalMessage || "").trim()) return false;
+    const payload = resolvedInput.payload || {};
+    const selected = String(choice?.chosen_value || question || "").trim();
+    const continuation = buildUserInputContinuationMessage({
+      originalMessage,
+      selectedValue: selected,
+      askPrompt: payload.prompt || checkpoint.params?.prompt || "",
+      mode: "handle",
+    });
+    await emitDisambiguationAck(choice, resolvedInput, { complete: false });
+    const runtime = String(checkpoint.runtime || "").trim();
+    const skillName = runtime === "prompt" ? String(checkpoint.skill || "").trim() : "";
+    const toolResultReplaced = applyUserInputToolResultResume({
+      sessionId: sid,
+      toolCallId: checkpoint.tool_call_id,
+      value: selected,
+      requestId: responseRequestId,
+    });
+    return agentChat(
+      ctx,
+      {
+        ...input,
+        controlPlaneAction: input.controlPlaneAction,
+        pendingUserInputResponse: undefined,
+        resumeIntent: { continueFromTranscript: toolResultReplaced },
+        body: {
+          ...body,
+          message: toolResultReplaced ? selected : continuation,
+          question: toolResultReplaced ? selected : continuation,
+          content: toolResultReplaced ? selected : continuation,
+          display_message: selected,
+          skill: skillName || undefined,
+          resume_run_id: resolvedInput.run_id || responseRunId || undefined,
         },
-        db: ctx.db,
-        signal: ctx.signal,
-        approval: input.body?.approval || 'ask',
-        settings: input.body?.settings || {},
-        awaitDecision: ({ id, name, arguments: args }) => new Promise((resolve) => {
-          let settled = false;
-          let timer;
-          const finish = (approved) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            ctx.signal?.removeEventListener('abort', abortDecision);
-            if (pendingDecisions.get(id) === finish) pendingDecisions.delete(id);
-            resolve(Boolean(approved));
-          };
-          const abortDecision = () => finish(false);
-          if (ctx.signal?.aborted) {
-            finish(false);
-            return;
-          }
-          timer = setTimeout(() => finish(false), 5 * 60 * 1000);
-          timer.unref?.();
-          pendingDecisions.set(id, finish);
-          ctx.signal?.addEventListener('abort', abortDecision, { once: true });
-          emit(createStreamEvent({
-            type: StreamEventType.APPROVAL_REQUESTED,
-            runId,
-            sessionId,
-            messageId,
-            seq: ++seq,
-            visibility: StreamVisibility.ACTION,
-            payload: { tool_call_id: id, name, arguments: args || {} },
-          }));
-        }),
-        loadHistory: () => ctx.query(
-          'SELECT role,content_items,sequence_number FROM session_messages WHERE session_id=$1 AND id<>$2 AND deleted_at IS NULL ORDER BY sequence_number',
-          [sessionId, userMessageId],
-        ),
-      }, callback));
-    if (ctx.signal?.aborted || result?.cancelled) {
-      await ctx.query('UPDATE agent_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2', ['cancelled', runId]);
-      await trace.finish({ status: 'cancelled', output: answerText() });
-      emit(createStreamEvent({ type: StreamEventType.RUN_CANCELLED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.HIDDEN, payload: { status: 'cancelled' } }));
-      return { success: false, cancelled: true };
+      },
+      emit,
+    ).then(() => true);
+  };
+
+  const emitSkillDisabled = ({ skillName, message }) => {
+    const stream = createAgentStreamEmitter({ emit, runId: randomUUID(), sessionId: sid });
+    stream.runStarted({ mode: "agent", skill: skillName, content: "Skill 已禁用" });
+    stream.content(`⚠️ ${message}`, {
+      content_id: randomUUID(),
+      content_type: "markdown",
+      title: "提示",
+      display: true,
+    });
+    stream.runCompleted({ status: "failed", message: "Skill 已禁用" });
+  };
+
+  if (question.trim() && userInputResponse && controlPlane) {
+    const resolvedInput = responseRequestId
+      ? await resolvePendingUserInput(
+        { query, queryOne },
+        {
+          sessionId: sid,
+          requestId: responseRequestId,
+          runId: responseRunId || null,
+          value: question,
+          userId,
+        },
+      )
+      : { status: "missing", recorded: false };
+    if (resolvedInput?.status !== "answered") {
+      await emitPendingActionFailure(resolvedInput, question);
+      return;
     }
-    const blocks = [...assistantBlocks.values()];
-    let sourceSequenceNumber = Number(userMessage.sequence_number || 0);
-    if (blocks.length) {
-      const assistantMessage = await persistSessionMessage(ctx, {
-        sessionId,
-        role: 'assistant',
-        contentItems: blocks,
-        metadata: { run_id: runId },
+    const normalizedChoice = { chosen_value: resolvedInput.chosen_value || question };
+    if (await continueResolvedUserInput(resolvedInput, normalizedChoice)) return;
+    await emitDisambiguationAck(normalizedChoice, resolvedInput);
+    return;
+  }
+
+  const resumeRequested = Boolean(input.resumeIntent?.continueFromTranscript);
+  // 正常消息统一交给 WorkspaceAgent。body.mode 和旧 smart_query/workspace 值仅作兼容输入,不再参与分流。
+  const skillProduct = body.module_id
+    ? await resolveInstalledSkillProduct(ctx, {
+        moduleId: body.module_id,
+        versionId: body.version_id,
+        bindingId: body.skill_binding_id,
+        sessionId: sid,
+        projectId: pid,
+      })
+    : null;
+  const miniappCommandRequest = body.miniapp_command && typeof body.miniapp_command === "object" && !Array.isArray(body.miniapp_command)
+    ? body.miniapp_command
+    : null;
+  if (miniappCommandRequest && !skillProduct) throw new ApiError("Agent 小程序命令必须从已安装产品中执行", 409);
+  const miniappCommand = miniappCommandRequest ? await resolveMiniAppAgentCommand(ctx, {
+    moduleId: body.module_id,
+    versionId: body.version_id,
+    actionName: miniappCommandRequest.action_name,
+    requestId: miniappCommandRequest.request_id,
+    input: miniappCommandRequest.input,
+  }) : null;
+  const skillDecision = skillProduct
+    ? {
+        skill_name: skillProduct.skill.name,
+        runtime: "prompt",
+        reason: "installed_skill_product",
+        normalized_message: miniappCommand?.agent_message || question,
+      }
+    : selectExplicitPromptSkill(body, question, { resume: resumeRequested });
+  const routedQuestion = skillDecision.normalized_message || question;
+  const agentQuestion = buildAttachmentContextMessage(routedQuestion, attachments);
+
+  if (
+    !skillProduct &&
+    question.trim() &&
+    skillDecision.skill_name &&
+    skillDecision.runtime === "prompt"
+  ) {
+    const enabled = await isSkillEnabledForWorkspace(ctx, pid, skillDecision.skill_name).catch(() => false);
+    if (!enabled) {
+      emitSkillDisabled({
+        skillName: skillDecision.skill_name,
+        message: isRegularProjectWorkspace(pid)
+          ? `Skill「${skillDecision.skill_name}」不存在或已禁用,请在项目设置 → 技能中启用后再使用。`
+          : `Skill「${skillDecision.skill_name}」不存在或已禁用,请在 App 设置 → 技能中启用后再使用。`,
       });
-      sourceSequenceNumber = Number(assistantMessage.sequence_number || sourceSequenceNumber);
+      return;
     }
-    const completeAndSync = ctx.completeAgentRunAndSync || ctx.db?.completeAgentRunAndSync;
-    if (typeof completeAndSync === 'function') {
-      await completeAndSync({ runId, sessionId, sourceSequenceNumber });
-    } else {
-      await ctx.query('UPDATE agent_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2', ['completed', runId]);
-      await ctx.db?.markAgentTranscriptSynchronized?.(sessionId, sourceSequenceNumber);
+  }
+
+  const taskId = body.resume_run_id || randomUUID();
+  const runMode = isRegularProjectWorkspace(pid) ? "agent" : "chat";
+  const trace = await createTraceRecorder({
+    emit,
+    projectId: pid,
+    sessionId: sid,
+    runId: taskId,
+    userId,
+    mode: runMode,
+    skill: skillDecision.skill_name || null,
+    question: routedQuestion,
+    callSite: "agent_chat",
+  });
+  const stream = createAgentStreamEmitter({
+    emit: trace.emit,
+    runId: taskId,
+    sessionId: sid,
+  });
+  stream.runStarted({
+    mode: runMode,
+    skill: skillDecision.skill_name || null,
+    content: "Agent 正在处理…",
+  });
+  if (skillDecision.skill_name) {
+    stream.skillSelected({
+      name: skillDecision.skill_name,
+      runtime: skillDecision.runtime,
+      status: "selected",
+      reason: skillDecision.reason,
+    });
+  }
+
+  // 累积 assistant 内容用于持久化(同 content_id 视为更新)。本轮只有这一处负责会话消息落库。
+  const items = [];
+  const upsertItem = (it) => {
+    const e = items.find((x) => x.id === it.id);
+    if (e) Object.assign(e, it);
+    else items.push(it);
+  };
+
+  const stream_callback = async (content, opts = {}) => {
+    const pushed = stream.content(content, opts);
+    upsertItem(pushed.item);
+    return pushed.contentId;
+  };
+
+  async function persist() {
+    try {
+      const seqRow = await queryOne(
+        `SELECT COALESCE(MAX(sequence_number),0) AS m FROM session_messages WHERE session_id=$1`,
+        [sid],
+      ).catch(() => ({ m: 0 }));
+      let seq = Number(seqRow?.m || 0);
+      if (!controlPlane) {
+        await query(
+          `INSERT INTO session_messages (id,session_id,role,content_items,sequence_number,created_at,updated_at)
+           VALUES ($1,$2,'user',$3,$4,now(),now())`,
+          [randomUUID(), sid, JSON.stringify(buildUserContentItems(displayQuestion, attachments)), ++seq],
+        ).catch(() => {});
+      }
+      await query(
+        `INSERT INTO session_messages (id,session_id,role,content_items,sequence_number,created_at,updated_at)
+         VALUES ($1,$2,'assistant',$3,$4,now(),now())`,
+        [randomUUID(), sid, JSON.stringify(items), ++seq],
+      ).catch(() => {});
+      await query(
+        `UPDATE sessions SET updated_at=now(), message_count=COALESCE(message_count,0)+$2 WHERE id=$1`,
+        [sid, controlPlane ? 1 : 2],
+      ).catch(() => {});
+    } catch {
+      /* 持久化失败不阻断本轮返回 */
     }
-    await trace.finish({ status: 'completed', output: answerText() });
-    emit(createStreamEvent({ type: StreamEventType.RUN_COMPLETED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.HIDDEN, payload: { status: 'completed' } }));
-    return { success: true };
+  }
+
+  if (!question.trim()) {
+    stream.runCompleted({ status: "failed", message: "请输入内容" });
+    await trace.finish({ status: "failed", error: "请输入内容" });
+    return;
+  }
+
+  // 本请求登记的待决 toolCallId(断连时统一拒绝,避免 beforeToolCall 永挂)
+  const decisionIds = [];
+  const activeAgents = new Set(); // 根 Agent + service 子 Agent,供「停止」统一 abort
+  // 客户端断开(用户点「停止」=abort fetch)→ abort agent + 释放待决。原 res.on('close') → ctx.signal 'abort'。
+  const onAbort = () => {
+    try {
+      for (const agent of activeAgents) agent?.abort?.();
+    } catch {
+      /* ignore */
+    }
+    for (const id of decisionIds) {
+      const r = pendingDecisions.get(id);
+      if (r) {
+        pendingDecisions.delete(id);
+        r(false);
+      }
+    }
+  };
+  ctx.signal?.addEventListener("abort", onAbort);
+
+  // 历史回退源:仅当 JSONL 转写缺失(老会话)时,Agent 才调用它从 SQL 重建上下文。
+  // 懒加载 —— 常规路径(有 JSONL)零 SQL 查询。取最近 40 条,按时序。
+  const loadHistory = async () => {
+    const rows = await query(
+      `SELECT role, content_items, sequence_number
+         FROM session_messages
+        WHERE session_id=$1
+        ORDER BY sequence_number DESC
+        LIMIT 40`,
+      [sid],
+    ).catch(() => []);
+    return Array.isArray(rows) ? rows.reverse() : [];
+  };
+
+  const agentContext = {
+    task_id: taskId,
+    user_id: userId,
+    project_id: pid,
+    session_id: sid,
+    // 权限模式:ask=写/执行都确认 / auto=仅命令执行确认 / full=全放行
+    approval: skillProduct ? "ask" : (["ask", "auto", "full"].includes(body.approval) ? body.approval : "ask"),
+    // 运行设置(来自设置页):网络超时 + 是否自动压缩上下文
+    settings: body.settings && typeof body.settings === "object" ? body.settings : {},
+    signal: ctx.signal || null,
+    loadHistory, // JSONL 缺失时的 SQL 重建源(懒调用)
+    db: { query, queryOne, transaction },
+    input_data: {
+      user_message: agentQuestion,
+      session_id: sid,
+      attachments,
+      miniapp_command: miniappCommand ? {
+        action_name: miniappCommand.action_name,
+        command: miniappCommand.command,
+        title: miniappCommand.title,
+        input: miniappCommand.input,
+      } : null,
+    },
+    skillDecision,
+    solidifiedSkill: skillProduct?.skill || null,
+    solidifiedProduct: skillProduct?.product || null,
+    resume: resumeRequested ? { continueFromTranscript: true } : null,
+    // 治理确认:返回一个 Promise,由 /tool-decision 端点 resolve(approved)
+    awaitDecision: (id) => {
+      decisionIds.push(id);
+      return new Promise((resolve) => pendingDecisions.set(id, resolve));
+    },
+    // Agent 创建后回调,登记给停止用
+    onAgent: (a) => {
+      if (a) activeAgents.add(a);
+    },
+    offAgent: (a) => activeAgents.delete(a),
+    onChildAgent: (a) => {
+      if (a) activeAgents.add(a);
+    },
+    offChildAgent: (a) => activeAgents.delete(a),
+  };
+  const runtime = createAgentRuntime({
+    ctx: { query, queryOne },
+    stream,
+    runId: taskId,
+    sessionId: sid,
+    projectId: pid,
+    userId,
+    skill: skillDecision.skill_name || null,
+    mode: isRegularProjectWorkspace(pid) ? "agent" : "chat",
+  });
+  agentContext.runtime = runtime;
+  await runtime.createRun();
+
+  try {
+    const workspaceAgent = await WorkspaceAgent.create({ projectId: pid });
+    const result = await runWithTraceContext(trace, () => runAgent(workspaceAgent, agentContext, stream_callback, { method: "execute" }));
+    const ok = result && result.success !== false;
+    const suspended = Boolean(agentContext?.data?._suspended_by_ask_user);
+
+    if (!suspended) {
+      stream.runCompleted({ status: ok ? "completed" : "failed", message: "处理完成" });
+      await runtime.completeRun(ok ? "completed" : "failed");
+    }
+    await persist();
+    await trace.finish({
+      status: suspended ? "suspended" : ok ? "completed" : "failed",
+      error: ok ? null : result?.error || result?.message || null,
+    });
   } catch (error) {
-    if (ctx.signal?.aborted || error?.name === 'AbortError') {
-      await ctx.query('UPDATE agent_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$2', ['cancelled', runId]);
-      await trace.finish({ status: 'cancelled', output: answerText() });
-      emit(createStreamEvent({ type: StreamEventType.RUN_CANCELLED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.HIDDEN, payload: { status: 'cancelled' } }));
-      return { success: false, cancelled: true };
-    }
-    await ctx.query('UPDATE agent_runs SET status=$1,finished_at=CURRENT_TIMESTAMP,metadata_json=$2,updated_at=CURRENT_TIMESTAMP WHERE id=$3', ['failed', JSON.stringify({ error: error?.message || String(error) }), runId]);
-    await trace.finish({ status: 'failed', error, output: answerText() });
-    emit(createStreamEvent({ type: StreamEventType.RUN_FAILED, runId, sessionId, messageId, seq: ++seq, visibility: StreamVisibility.PRIMARY, payload: { status: 'failed', message: error?.message || String(error) } }));
+    await trace.finish({ status: "failed", error });
     throw error;
+  } finally {
+    ctx.signal?.removeEventListener("abort", onAbort);
+    activeAgents.clear();
   }
 }

@@ -175,6 +175,8 @@ Summary:
 
 Event payloads describe what is happening. Harness getters describe latest config for future snapshots. Hook and listener settlement should be awaited in lifecycle order where possible; transport backpressure is handled below the harness by `AssistantMessageStream`, so the harness does not need a separate async event queue merely to keep SSE or websocket reads flowing.
 
+The `tool_result` hook sees the tool's `handoff` and `terminate` fields. Returning `handoff: null` explicitly clears a proposed final handoff; omitting the field preserves it. This gives audit and policy hooks a way to keep a successful tool result while forcing the parent model to continue.
+
 ## Planned session facade
 
 Extensions should eventually interact with a harness-scoped `HarnessSession` facade rather than the raw session. The facade should wrap the internal session and enforce harness pending-write ordering semantics. Once this exists, hooks and event listeners can receive a context that exposes the full `AgentHarness` plus the session facade without giving direct access to unordered raw session writes.
