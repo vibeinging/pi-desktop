@@ -10,12 +10,15 @@ YiW 以 `vibeinging/yiWork` 作为公开目标仓库。目标仓库已经公开�
 
 发布分支：`feature/yiwork-app`。
 
+在更新默认分支前，原 `main` 已保存在 `archive/main-before-yiwork-2026-07-22`，两者当时都指向提交 `de888ff6cf4742c35195d7e54fe5be27bc0da749`。该分支用于查看或恢复迁移前的公开版本。
+
 ## 公开内容
 
 - Electron、Renderer、Server 和通用 Eval 源码。
 - Agent、小程序、Skill、MCP、数据工作台和 Trace 优化逻辑。
 - 当前设计、规格、调研和可公开测试报告。
 - MIT 许可证、README、贡献说明、安全说明、第三方代码说明和基础 CI。
+- 面向开源用户重新整理的 README，明确说明主 Agent、小程序、Skill 和三种更新路径。
 
 ## 排除内容
 
