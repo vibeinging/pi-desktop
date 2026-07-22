@@ -69,7 +69,7 @@ export default defineConfig(({ mode }) => {
           api: 'modern-compiler',
           silenceDeprecations: ['legacy-js-api'],
           // 对齐原工程:把 responsive.scss 的 @include mobile/tablet 等 mixin 全局注入每个 scss 入口
-          additionalData: `@use "${pathSrc.replace(/\\\\/g, '/')}/styles/responsive.scss" as *;\n`
+          additionalData: `@use "${pathSrc.replace(/\\/g, '/')}/styles/responsive.scss" as *;\n`
         }
       }
     }
