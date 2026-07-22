@@ -123,8 +123,14 @@ function normalizeCacheRetention(raw) {
 }
 
 function isDashScopeOpenAIBaseUrl(baseUrl) {
-  const url = String(baseUrl || "").toLowerCase();
-  return url.includes("dashscope") || url.includes("maas.aliyuncs.com");
+  try {
+    const hostname = new URL(String(baseUrl || "")).hostname.toLowerCase().replace(/\.$/, "");
+    const labels = hostname.split(".");
+    if (labels.length !== 3 || labels[1] !== "aliyuncs" || labels[2] !== "com") return false;
+    return labels[0] === "maas" || labels[0] === "dashscope" || labels[0].startsWith("dashscope-");
+  } catch {
+    return false;
+  }
 }
 
 function resolvePiCompat(cfg, { api, baseUrl } = {}) {

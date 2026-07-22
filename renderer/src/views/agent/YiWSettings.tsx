@@ -127,6 +127,7 @@ function normalizeYiWSettings(raw: unknown): YiWSettingsData {
   const merged = { ...DEFAULTS, ...value }
   return {
     ...merged,
+    customCert: DEFAULTS.customCert,
     language: normalizeLanguage(value.language),
     zoom: ['small', 'normal', 'large'].includes(String(merged.zoom)) ? merged.zoom : DEFAULTS.zoom,
     interaction: merged.interaction === 'interrupt' ? 'interrupt' : 'queue',
@@ -136,6 +137,28 @@ function normalizeYiWSettings(raw: unknown): YiWSettingsData {
     netTimeout: ['30', '60', '120', '300', '600'].includes(String(merged.netTimeout))
       ? merged.netTimeout
       : DEFAULTS.netTimeout
+  }
+}
+
+function pickLocalSettings(settings: YiWSettingsData): Omit<YiWSettingsData, 'customCert'> {
+  return {
+    language: settings.language,
+    zoom: settings.zoom,
+    inheritProfile: settings.inheritProfile,
+    terminalFont: settings.terminalFont,
+    httpProxy: settings.httpProxy,
+    noProxy: settings.noProxy,
+    netTimeout: settings.netTimeout,
+    autoCompact: settings.autoCompact,
+    taskNotify: settings.taskNotify,
+    notifySound: settings.notifySound,
+    interaction: settings.interaction,
+    showThinking: settings.showThinking,
+    showTodo: settings.showTodo,
+    autoArchiveTasks: settings.autoArchiveTasks,
+    archiveRetention: settings.archiveRetention,
+    dataRoot: settings.dataRoot,
+    optimizeExperience: settings.optimizeExperience
   }
 }
 
@@ -176,7 +199,7 @@ export function stepYiWZoom(dir: -1 | 0 | 1): YiWSettingsData['zoom'] {
       ? 'normal'
       : ZOOM_ORDER[Math.min(ZOOM_ORDER.length - 1, Math.max(0, ZOOM_ORDER.indexOf(cur.zoom) + dir))]
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...cur, zoom: next }))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(pickLocalSettings({ ...cur, zoom: next })))
   } catch {
     /* ignore */
   }
@@ -266,7 +289,7 @@ export default function YiWSettings({
 
   // 持久化 + 即时应用缩放
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(pickLocalSettings(data)))
   }, [data])
   useEffect(() => {
     applyYiWZoom(data.zoom)

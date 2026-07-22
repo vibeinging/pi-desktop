@@ -245,7 +245,8 @@ function normalizeMarkdownImageSources(text: string) {
   return text.replace(IMAGE_MARKDOWN_RE, (raw, alt: string, src: string) => {
     const nextSrc = imageSrcFromPath(src || '')
     if (!isRenderableImageSrc(nextSrc)) return raw
-    return `![${String(alt || '').replace(/]/g, '\\]')}](${nextSrc})`
+    const safeAlt = String(alt || '').replace(/\\/g, '\\\\').replace(/]/g, '\\]')
+    return `![${safeAlt}](${nextSrc})`
   })
 }
 
