@@ -83,7 +83,7 @@
     "@vitejs/plugin-react-swc": "^3.7.1",
     "eslint": "^8.57.1",
     "eslint-plugin-react-hooks": "^5.0.0",
-    "eslint-plugin-react-refresh": "^0.4.14",
+    "eslint-plugin-react-refresh": "^0.5.3",
     "fast-glob": "^3.3.3",
     "jsdom": "^26.1.0",
     "postcss": "^8.4.47",
