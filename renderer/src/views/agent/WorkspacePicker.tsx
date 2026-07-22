@@ -11,22 +11,22 @@ import {
   IconMessage,
   IconSearch
 } from '@tabler/icons-react'
-import type { Workspace } from './AgentNav'
-import styles from './agent.module.scss'
+import type { Workspace } from './YiWNav'
+import styles from './yiw.module.scss'
 
 interface Props {
   workspaces: Workspace[] // 含 CHAT_WS(纯聊天)+ 项目 + 已打开文件夹
   activeWs: string
   onSelect: (id: string) => void
   onOpenFolder: () => void
-  /** 创建一个带本地工作区的项目。 */
+  /** 创建一个问数项目(= 带本地工作区文件夹的项目);返回后切到新项目 */
   onCreateProject?: (name: string) => Promise<void> | void
 }
 
 export default function WorkspacePicker({ workspaces, activeWs, onSelect, onOpenFolder, onCreateProject }: Props) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
-  // 创建项目的内联输入态。
+  // 「创建问数项目」内联输入态:点开 = 把底部按钮换成命名输入框,回车创建
   const [creating, setCreating] = useState(false)
   const [pname, setPname] = useState('')
   const [saving, setSaving] = useState(false)
@@ -139,7 +139,7 @@ export default function WorkspacePicker({ workspaces, activeWs, onSelect, onOpen
                 <input
                   autoFocus
                   className={styles.wsPickInput}
-                  placeholder="项目名称，回车创建"
+                  placeholder="问数项目名称,回车创建"
                   value={pname}
                   disabled={saving}
                   onChange={(e) => setPname(e.target.value)}
@@ -158,7 +158,7 @@ export default function WorkspacePicker({ workspaces, activeWs, onSelect, onOpen
             ) : (
               <button type="button" className={styles.wsPickFoot} onClick={() => setCreating(true)}>
                 <IconDatabasePlus size={15} stroke={1.6} />
-                <span>创建项目…</span>
+                <span>创建问数项目…</span>
               </button>
             )}
           </div>

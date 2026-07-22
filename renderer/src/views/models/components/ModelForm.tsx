@@ -30,7 +30,7 @@ import { copyToClipboard } from '@/utils/clipboard'
 import ModelTestResult from './ModelTestResult'
 import styles from './ModelForm.module.scss'
 
-// JSON 占位示例含花括号，不走 i18n 插值处理。
+// JSON 占位示例：含花括号，不能走 i18n（vue-i18n 会把 {} 当插值占位符报错），也无翻译价值
 const PLACEHOLDER_EXTRA_HEADERS = '{"Authorization": "Bearer xxx"}'
 const PLACEHOLDER_EXTRA_BODY = '{"temperature": 0.7, "max_tokens": 2048}'
 const PLACEHOLDER_EXTRA_BODY_SHORT = '{"key": "value"}'
@@ -61,7 +61,7 @@ export interface ModelFormHandle {
 }
 
 // ============ 角色 Hero 派生信息（按 category 切色/图标/标题）============
-// PRIMARY/SECONDARY/EMBEDDING 用 indigo/violet/teal 三套色调，强化"现在配什么"的辨识度
+// PRIMARY/SECONDARY/EMBEDDING 用 yiw/yiw/teal 三套色调，强化"现在配什么"的辨识度
 const ROLE_META: Record<string, { icon: any; theme: string; labelKey: string; descKey: string }> = {
   PRIMARY: { icon: IconMessageDots, theme: styles.rolePrimary, labelKey: 'models.tabs.chat', descKey: 'models.role.primaryDesc' },
   SECONDARY: { icon: IconCpu, theme: styles.roleSecondary, labelKey: 'models.tabs.operatorChat', descKey: 'models.role.secondaryDesc' },
@@ -70,8 +70,8 @@ const ROLE_META: Record<string, { icon: any; theme: string; labelKey: string; de
 
 // 无对应 i18n key 时的中文 fallback（避免界面显示原始 key 路径）
 const ROLE_DESC_FALLBACK: Record<string, string> = {
-  PRIMARY: '主力对话模型，承担工具调用与多轮任务等核心工作',
-  SECONDARY: '副模型（小型任务），用于轻量分析和内容整理',
+  PRIMARY: '主力对话模型，承担 NL2SQL / 多轮规划等核心任务',
+  SECONDARY: '副模型（小型任务），用于语义算子、轻量结构化抽取',
   EMBEDDING: '向量检索基础设施，统一维度 1024',
 }
 
@@ -96,7 +96,8 @@ const ModelForm = forwardRef<ModelFormHandle, ModelFormProps>(function ModelForm
   const { t } = useTranslation()
   const { isMobile } = useResponsive()
 
-  // 父子组件共享同一个表单对象；字段更新后强制本组件重渲染。
+  // 父组件传入的 modelForm 是同一引用（对齐 Vue reactive 的"就地修改"语义）：
+  // 这里就地写字段 + 强制本组件重渲染
   const [, forceUpdate] = useReducer((x: number) => x + 1, 0)
   const setField = (key: string, value: any) => {
     modelForm[key] = value
@@ -142,7 +143,7 @@ const ModelForm = forwardRef<ModelFormHandle, ModelFormProps>(function ModelForm
     onTestConfig?.()
   }
 
-  // 表单验证：检查必填项、长度和 EMBEDDING 维度
+  // 表单验证：对齐 element-plus modelRules（required + 长度 + EMBEDDING 维度）
   const validate = async (): Promise<boolean> => {
     const fail = (message: string) => {
       notifications.show({ color: 'red', message })
@@ -186,7 +187,7 @@ const ModelForm = forwardRef<ModelFormHandle, ModelFormProps>(function ModelForm
 
   return (
     <div className={styles.modelFormInline}>
-      {/* 角色 Hero：按 category 切色（indigo/violet/teal），强化"现在在配什么" */}
+      {/* 角色 Hero：按 category 切色（yiw/yiw/teal），强化"现在在配什么" */}
       <div className={`${styles.roleHero} ${roleThemeClass}`}>
         <div className={styles.roleHeroLeft}>
           <div className={styles.roleHeroIcon}>

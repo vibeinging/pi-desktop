@@ -1,8 +1,8 @@
 // 工作区文件树(递归)。点文件 → onPick(path)(用于 @ 引用进输入框)。
 import { useState } from 'react'
 import { IconChevronRight, IconFile, IconFolder } from '@tabler/icons-react'
-import type { FileNode } from '@/api/agent'
-import styles from './agent.module.scss'
+import type { FileNode } from '@/api/yiw'
+import styles from './yiw.module.scss'
 
 function Node({ node, depth, onPick }: { node: FileNode; depth: number; onPick?: (p: string) => void }) {
   const [open, setOpen] = useState(depth < 1)

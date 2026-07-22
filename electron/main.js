@@ -1,192 +1,69 @@
-// PI Desktop —— Electron 主进程。
+// YiW —— Electron 主进程。
 //
 // 职责:
 // 1. 创建主窗口(尺寸/背景/自定义标题栏);
 // 2. 起本地 Node 后端(app/server),app 退出时 kill;
 // 3. ipcMain 提供原生文件/文件夹选择,preload 暴露给前端;
-// 4. dev 加载 vite(52731),prod 加载 app/renderer/dist。
+// 4. dev 加载 vite(57131),prod 加载 renderer/dist。
 //
 // 后端进程模型:dev 用系统 node 直跑;prod 用 Electron 自身以 Node 模式运行本地后端。
 
-const { app, BrowserWindow, ipcMain, dialog, screen, shell, nativeImage, Menu, protocol, session, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, screen, shell, nativeImage, Menu, protocol, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const http = require('node:http');
-const { fileURLToPath } = require('node:url');
 const { spawn } = require('node:child_process');
-const { BackendProcessManager } = require('./backend-process-manager.cjs');
-const { CredentialStore } = require('./credential-store.cjs');
-const { runPackagedSmoke } = require('./packaged-smoke.cjs');
-const APP_CONFIG = require('./generated-app-config.cjs');
 
 const isDev = !app.isPackaged;
-// 打包后后端和原生依赖位于 app.asar 外，避免 better-sqlite3 无法加载或被临时解包。
-// Electron 壳与 renderer 仍放在 app.asar 内。
-const SERVER_DIR = isDev
-  ? path.join(__dirname, '..', 'server')
-  : path.join(process.resourcesPath, 'server');
-const DIST_INDEX = isDev
-  ? path.join(__dirname, '..', 'renderer', 'dist', 'index.html')
-  : path.join(app.getAppPath(), 'renderer', 'dist', 'index.html');
-const DEV_URL = process.env.PI_DEV_URL || 'http://localhost:52731';
-const APP_ICON = path.join(__dirname, '..', APP_CONFIG.icons.png);
-const APP_NAME = APP_CONFIG.shortName;
-const APP_DISPLAY_NAME = APP_CONFIG.productName;
-const LEGACY_USER_DATA_DIR_NAME = APP_CONFIG.userDataDirName;
-const LOCAL_FILE_SCHEME = APP_CONFIG.localFileScheme;
-const DATA_ROOT = path.join(os.homedir(), APP_CONFIG.dataDirName);
+const SERVER_DIR = path.join(__dirname, '..', 'server');
+const DIST_INDEX = path.join(__dirname, '..', 'renderer', 'dist', 'index.html');
+const DEV_URL = process.env.YIW_DEV_URL || 'http://localhost:57131';
+const APP_ICON = path.join(__dirname, 'icons', 'icon.png'); // 应用图标
+const APP_NAME = 'yiw';
+const APP_DISPLAY_NAME = 'YiW';
+const USER_DATA_DIR_NAME = 'yiw-electron';
+const LOCAL_FILE_SCHEME = 'yiw-file';
+const DATA_ROOT = path.join(os.homedir(), '.yiw');
 const PROJECTS_ROOT = path.join(DATA_ROOT, 'projects');
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 const localFileRoots = new Set();
 const DEFAULT_NO_PROXY = ['localhost', '127.0.0.1', '::1'];
 const CHAT_PID = '__chat__';
 const PASTE_ATTACHMENTS_DIR = 'pasted-text';
+const DROPPED_ATTACHMENTS_DIR = 'dropped-files';
+const MAX_DROPPED_FILE_BYTES = 100 * 1024 * 1024;
 
 protocol.registerSchemesAsPrivileged([
   { scheme: LOCAL_FILE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
 
-function getLegacyUserDataPath() {
+function getUserDataPath() {
   if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', LEGACY_USER_DATA_DIR_NAME);
+    return path.join(os.homedir(), 'Library', 'Application Support', USER_DATA_DIR_NAME);
   }
   if (process.platform === 'win32') {
-    return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), LEGACY_USER_DATA_DIR_NAME);
+    return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), USER_DATA_DIR_NAME);
   }
-  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), LEGACY_USER_DATA_DIR_NAME);
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), USER_DATA_DIR_NAME);
 }
 
 app.setName(APP_NAME);
-app.setPath('userData', getLegacyUserDataPath());
+app.setPath('userData', getUserDataPath());
 
 let mainWindow = null;
+let backendProc = null;
 let isQuitting = false;
 let closePromptOpen = false;
+let backendStopping = null;
 let backendStoppedForQuit = false;
-let trustedRendererDocument = false;
+const pending = new Map(); // id → (msg)=>void:后端进程消息按 id 路由(api-request 收集 / stream 转发)
 let reqSeq = 0;
-let packagedSmokeStarted = false;
-let packagedSmokeDeadline = null;
 const CLOSE_BEHAVIOR_VALUES = new Set(['ask', 'minimize', 'quit']);
+const BACKEND_GRACEFUL_SHUTDOWN_MS = 5000;
+const BACKEND_SIGTERM_SHUTDOWN_MS = 2500;
 const MIN_WINDOW_WIDTH = 900;
 const MIN_WINDOW_HEIGHT = 600;
-const MAX_IPC_PATH_LENGTH = 32 * 1024;
-const MAX_IPC_BODY_BYTES = 32 * 1024 * 1024;
-const ALLOWED_API_METHODS = new Set(['DELETE', 'GET', 'HEAD', 'OPTIONS', 'PATCH', 'POST', 'PUT']);
 let windowStateSaveTimer = null;
-
-function isTrustedRendererUrl(rawUrl) {
-  try {
-    const candidate = new URL(String(rawUrl || ''));
-    if (isDev) {
-      const dev = new URL(DEV_URL);
-      return (candidate.protocol === 'http:' || candidate.protocol === 'https:') && candidate.origin === dev.origin;
-    }
-    if (candidate.protocol !== 'file:') return false;
-    return path.resolve(fileURLToPath(candidate)) === path.resolve(DIST_INDEX);
-  } catch {
-    return false;
-  }
-}
-
-function isAllowedExternalUrl(rawUrl) {
-  try {
-    const url = new URL(String(rawUrl || ''));
-    return url.protocol === 'https:' || url.protocol === 'http:' || url.protocol === 'mailto:';
-  } catch {
-    return false;
-  }
-}
-
-function openExternalSafely(rawUrl) {
-  if (!isAllowedExternalUrl(rawUrl)) return;
-  shell.openExternal(String(rawUrl)).catch((error) => {
-    console.warn('[electron] 无法打开外部链接:', error?.message || error);
-  });
-}
-
-function guardMainFrameNavigation(event, targetUrl) {
-  if (isTrustedRendererUrl(targetUrl)) return;
-  event.preventDefault();
-  openExternalSafely(targetUrl);
-}
-
-function assertTrustedIpcSender(event) {
-  const contents = mainWindow?.webContents;
-  if (!contents || contents.isDestroyed() || event.sender !== contents) {
-    throw new Error('IPC 请求来源不是当前应用窗口');
-  }
-  if (event.senderFrame && event.sender.mainFrame && event.senderFrame !== event.sender.mainFrame) {
-    throw new Error('IPC 请求只能来自应用主页面');
-  }
-  // BrowserRouter 在 file:// 页面内 pushState 后，Electron 会把当前 URL 显示为
-  // file:///agent 一类路由地址。这里信任已经从 DIST_INDEX 启动且未发生整页导航的文档，
-  // 整页外部跳转仍由 will-navigate / will-redirect 拦截。
-  if (!trustedRendererDocument) throw new Error('IPC 请求来源页面未受信任');
-}
-
-function handleTrustedIpc(channel, handler) {
-  ipcMain.handle(channel, async (event, ...args) => {
-    assertTrustedIpcSender(event);
-    return handler(event, ...args);
-  });
-}
-
-function onTrustedIpc(channel, handler) {
-  ipcMain.on(channel, (event, ...args) => {
-    try {
-      assertTrustedIpcSender(event);
-      handler(event, ...args);
-    } catch (error) {
-      console.warn(`[electron] 已拒绝 ${channel}:`, error?.message || error);
-    }
-  });
-}
-
-function optionalIpcPath(value) {
-  if (value === null || value === undefined || value === '') return undefined;
-  const candidate = String(value);
-  if (candidate.length > MAX_IPC_PATH_LENGTH || candidate.includes('\0')) throw new Error('路径参数无效');
-  return candidate;
-}
-
-function requiredIpcPath(value) {
-  const candidate = optionalIpcPath(value);
-  if (!candidate) throw new Error('路径参数不能为空');
-  return candidate;
-}
-
-function normalizeIpcHeaders(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  const entries = Object.entries(value);
-  if (entries.length > 100) throw new Error('请求头数量过多');
-  const headers = {};
-  for (const [rawName, rawValue] of entries) {
-    const name = String(rawName);
-    const headerValue = String(rawValue ?? '');
-    if (['__proto__', 'constructor', 'prototype'].includes(name.toLowerCase()) || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/.test(name) || /[\r\n]/.test(headerValue) || headerValue.length > 8192) {
-      throw new Error('请求头参数无效');
-    }
-    headers[name] = headerValue;
-  }
-  return headers;
-}
-
-function normalizeBackendRequest(value = {}) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('请求参数无效');
-  const method = String(value.method || 'GET').toUpperCase();
-  if (!ALLOWED_API_METHODS.has(method)) throw new Error('请求方法不受支持');
-  const url = String(value.url || '/');
-  if (url.length > 8192 || /[\u0000-\u001f\u007f]/.test(url) || !/^\/api(?:[/?#]|$)/.test(url)) {
-    throw new Error('只能访问应用本地 API');
-  }
-  const body = value.body === null || value.body === undefined ? null : String(value.body);
-  if (body !== null && Buffer.byteLength(body, 'utf8') > MAX_IPC_BODY_BYTES) throw new Error('请求内容过大');
-  const bodyEncoding = value.bodyEncoding === undefined ? undefined : String(value.bodyEncoding);
-  if (bodyEncoding !== undefined && bodyEncoding !== 'base64') throw new Error('请求编码不受支持');
-  return { method, url, headers: normalizeIpcHeaders(value.headers), body, bodyEncoding };
-}
 
 function networkSettingsPath() {
   return path.join(app.getPath('userData'), 'agent-network-settings.json');
@@ -475,13 +352,28 @@ function savePastedTextAttachment(payload = {}) {
   };
 }
 
+function saveDroppedFileAttachment(payload = {}) {
+  const rawName = path.basename(String(payload.name || 'dropped-file')).replace(/[\0/\\]/g, '').trim();
+  const name = rawName || 'dropped-file';
+  const bytes = Buffer.from(payload.bytes || []);
+  if (bytes.length > MAX_DROPPED_FILE_BYTES) throw new Error('拖入文件不能超过 100 MB');
+  const workspaceRoot = pasteAttachmentWorkspaceRoot(payload.projectId, payload.sessionId);
+  const dir = path.join(workspaceRoot, DROPPED_ATTACHMENTS_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  registerLocalFileRoot(workspaceRoot);
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const filePath = path.join(dir, `${stamp}-${suffix}-${name}`);
+  fs.writeFileSync(filePath, bytes);
+  return { path: filePath, name, size: bytes.length };
+}
+
 registerLocalFileRoot(PROJECTS_ROOT);
 
 function configureApplicationIdentity() {
-  app.setAppUserModelId(APP_CONFIG.appId);
   if (process.platform === 'darwin') {
     app.setAboutPanelOptions({
-      applicationName: APP_DISPLAY_NAME,
+      applicationName: APP_NAME,
       applicationVersion: app.getVersion(),
       version: app.getVersion(),
       iconPath: APP_ICON,
@@ -598,187 +490,90 @@ function registerLocalFileProtocol() {
 }
 
 // ── 后端生命周期 ──
-function spawnBackendProcess() {
+function startBackend() {
   const entryRel = path.join('src', 'index.js');
   // dev:系统 node;prod:Electron 自身以 Node 模式跑(自包含,需 electron-rebuild 原生模块)
-  const cmd = isDev ? (process.env.PI_NODE_BIN || 'node') : process.execPath;
+  const cmd = isDev ? (process.env.YIW_NODE_BIN || 'node') : process.execPath;
   const args = isDev ? [entryRel] : [path.join(SERVER_DIR, entryRel)];
   const env = { ...process.env };
+  env.YIW_APP_VERSION = app.getVersion();
   applyNetworkEnv(env);
-  if (isDev) env.PI_TCP = '1'; // dev:后端同时听 TCP,便于 eval 复用运行中的实例;prod 走纯进程通道(零端口)
+  if (isDev) env.YIW_TCP = '1'; // dev:后端同时听 TCP,便于 eval 复用运行中的实例;prod 走纯进程通道(零端口)
   if (!isDev) env.ELECTRON_RUN_AS_NODE = '1';
-  // stdio 第 4 个 'ipc':建进程消息通道(process.send/on('message'))，应用内不开放端口。
-  const child = spawn(cmd, args, { cwd: SERVER_DIR, env, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
-  child.on('exit', (code, sig) => console.log(`[electron] 后端退出 code=${code} sig=${sig}`));
-  console.log(`[electron] 后端进程已创建 (${cmd} ${args.join(' ')}, pid=${child.pid})`);
-  return child;
-}
-
-const backendManager = new BackendProcessManager({ spawnProcess: spawnBackendProcess });
-const credentialStore = new CredentialStore({
-  safeStorage,
-  filePath: path.join(app.getPath('userData'), 'credentials.json'),
-});
-
-const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function inspectPackagedRenderer() {
-  const deadline = Date.now() + 15_000;
-  let lastState = null;
-  while (Date.now() < deadline) {
-    const contents = mainWindow?.webContents;
-    if (contents && !contents.isDestroyed() && !contents.isLoadingMainFrame()) {
-      lastState = await contents.executeJavaScript(`({
-        readyState: document.readyState,
-        hasRoot: Boolean(document.getElementById('app')),
-        hasElectronApi: window.electronAPI?.isElectron === true,
-        bootScreenVisible: Boolean(document.querySelector('.app-boot'))
-      })`);
-      if (lastState?.readyState === 'complete' && lastState.hasRoot && lastState.hasElectronApi && !lastState.bootScreenVisible) {
-        return lastState;
-      }
-    }
-    await wait(50);
-  }
-  if (lastState) return lastState;
-  throw new Error('Renderer 页面加载超时');
-}
-
-async function savePackagedSmokeTextAttachment(payload) {
-  const contents = mainWindow?.webContents;
-  if (!contents || contents.isDestroyed()) throw new Error('Renderer 不可用，无法保存文本附件');
-  return contents.executeJavaScript(
-    `window.electronAPI.savePastedTextAttachment(${JSON.stringify(payload)})`,
-  );
-}
-
-function inspectPackagedSmokeAttachment(filePath) {
-  const target = String(filePath || '');
-  if (!target) return { exists: false, content: '' };
   try {
-    return { exists: fs.statSync(target).isFile(), content: fs.readFileSync(target, 'utf8') };
-  } catch {
-    return { exists: false, content: '' };
+    // stdio 第 4 个 'ipc':建进程消息通道(process.send/on('message')),ZCode 式传输(无端口/socket)
+    const child = spawn(cmd, args, { cwd: SERVER_DIR, env, stdio: ['inherit', 'inherit', 'inherit', 'ipc'] });
+    backendProc = child;
+    child.on('error', (e) => console.error('[electron] 后端启动失败:', e?.message || e));
+    child.on('exit', (code, sig) => {
+      if (backendProc === child) backendProc = null;
+      console.log(`[electron] 后端退出 code=${code} sig=${sig}`);
+    });
+    // 后端回传的消息按 id 路由到对应等待者
+    child.on('message', (m) => { if (m && m.id != null) { const h = pending.get(m.id); if (h) h(m); } });
+    console.log(`[electron] 后端已启动 (${cmd} ${args.join(' ')}, pid=${child.pid})`);
+  } catch (e) {
+    console.error('[electron] 无法启动后端:', e?.message || e);
   }
 }
 
-function startPackagedSmokeModelServer() {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
-        res.writeHead(404, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: 'not found' } }));
-        return;
-      }
-      req.resume();
-      req.once('end', () => {
-        const chunkBase = {
-          id: 'chatcmpl-packaged-smoke',
-          object: 'chat.completion.chunk',
-          created: Math.floor(Date.now() / 1000),
-          model: 'packaged-smoke-model',
-        };
-        res.writeHead(200, {
-          'content-type': 'text/event-stream; charset=utf-8',
-          'cache-control': 'no-cache',
-          connection: 'close',
-        });
-        res.write(`data: ${JSON.stringify({
-          ...chunkBase,
-          choices: [{ index: 0, delta: { role: 'assistant', content: 'packaged smoke agent reply' }, finish_reason: null }],
-        })}\n\n`);
-        res.write(`data: ${JSON.stringify({
-          ...chunkBase,
-          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17 },
-        })}\n\n`);
-        res.end('data: [DONE]\n\n');
-      });
-    });
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      resolve({
-        baseUrl: `http://127.0.0.1:${address.port}/v1`,
-        stop: () => new Promise((done) => {
-          server.closeAllConnections?.();
-          server.close(() => done());
-        }),
-      });
-    });
+function waitForBackendExit(child, timeoutMs) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(false);
+    }, timeoutMs);
+    const onExit = () => {
+      cleanup();
+      resolve(true);
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off('exit', onExit);
+    };
+    child.once('exit', onExit);
   });
 }
 
-async function executePackagedSmoke() {
-  let modelServer = null;
-  let exitCode = 1;
-  try {
-    modelServer = await startPackagedSmokeModelServer();
-    const result = await runPackagedSmoke({
-      request: requestBackend,
-      restartBackend: () => backendManager.restart(),
-      inspectRenderer: inspectPackagedRenderer,
-      saveTextAttachment: savePackagedSmokeTextAttachment,
-      inspectAttachment: inspectPackagedSmokeAttachment,
-      modelBaseUrl: modelServer.baseUrl,
-    });
-    console.log(`[smoke] packaged flow passed (messages=${result.messageCount}, attachment=${result.attachmentName})`);
-    exitCode = 0;
-  } catch (error) {
-    console.error('[smoke] packaged flow failed:', error?.stack || error);
-  } finally {
-    clearTimeout(packagedSmokeDeadline);
-    await stopBackend().catch((error) => {
-      console.warn('[smoke] 后端关闭失败:', error?.message || error);
-    });
-    await modelServer?.stop().catch(() => {});
-    app.exit(exitCode);
+function rejectPendingBackendRequests(message = '后端正在关闭') {
+  for (const [id, handler] of pending) {
+    try {
+      handler({ id, type: 'error', error: message });
+    } catch {
+      /* ignore */
+    }
   }
+  pending.clear();
 }
 
-function startPackagedSmoke() {
-  if (packagedSmokeStarted) return;
-  packagedSmokeStarted = true;
-  void executePackagedSmoke();
-}
-
-backendManager.on('state', (state) => {
-  console.log(`[electron] 后端状态: ${state.status}${state.error ? ` (${state.error})` : ''}`);
-  if (process.env.PI_SMOKE_TEST === '1' && state.status === 'ready') {
-    console.log('[smoke] backend ready');
-    startPackagedSmoke();
-  }
-  try {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('pi-desktop-backend-state', state);
-  } catch { /* renderer 尚未就绪 */ }
-});
-backendManager.on('backend-message', async (message, child) => {
-  if (message?.type !== 'credential-request' || !message.requestId) return;
-  const response = { type: 'credential-response', requestId: message.requestId };
-  try {
-    if (message.action === 'get') response.value = credentialStore.get(message.ref);
-    else if (message.action === 'set') response.value = credentialStore.set(message.ref, message.value);
-    else if (message.action === 'delete') response.value = credentialStore.delete(message.ref);
-    else throw new Error('不支持的凭据操作');
-    response.ok = true;
-  } catch (error) {
-    response.ok = false;
-    response.error = error?.message || String(error);
-  }
-  try { if (child.connected) child.send(response); } catch { /* 后端已经退出 */ }
-});
-
-function startBackend() {
-  backendManager.start().catch((error) => console.error('[electron] 后端启动失败:', error?.message || error));
-}
-
-function stopBackend() {
-  return backendManager.stop();
+async function stopBackend() {
+  if (backendStopping) return backendStopping;
+  const child = backendProc;
+  if (!child) return;
+  rejectPendingBackendRequests();
+  backendProc = null;
+  backendStopping = (async () => {
+    if (child.connected) {
+      try { child.disconnect(); } catch { /* ignore */ }
+      if (await waitForBackendExit(child, BACKEND_GRACEFUL_SHUTDOWN_MS)) return;
+    }
+    try { child.kill('SIGTERM'); } catch { /* ignore */ }
+    if (await waitForBackendExit(child, BACKEND_SIGTERM_SHUTDOWN_MS)) return;
+    try { child.kill('SIGKILL'); } catch { /* ignore */ }
+    await waitForBackendExit(child, 1000);
+  })().finally(() => {
+    if (backendStopping) backendStopping = null;
+  });
+  return backendStopping;
 }
 
 function stopBackendSync() {
-  backendManager.stopSync();
+  rejectPendingBackendRequests();
+  try { backendProc?.kill('SIGTERM'); } catch { /* ignore */ }
+  backendProc = null;
 }
+function backendSend(msg) { try { backendProc?.send(msg); } catch { /* backend down */ } }
 
 function minimizeMainWindow(win = mainWindow) {
   try {
@@ -809,7 +604,7 @@ async function handleMainWindowCloseRequest(win = mainWindow) {
   try {
     const result = await dialog.showMessageBox(win, {
       type: 'question',
-      title: `关闭 ${APP_DISPLAY_NAME}？`,
+      title: '关闭YiW？',
       message: '要关闭应用还是最小化到后台？',
       detail: '最小化会保留本地服务和当前会话；关闭应用会停止后台进程。',
       buttons: ['最小化', '关闭应用', '取消'],
@@ -855,19 +650,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
     },
   });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    openExternalSafely(url);
-    return { action: 'deny' };
-  });
-  mainWindow.webContents.on('will-navigate', (event, url) => guardMainFrameNavigation(event, url));
-  mainWindow.webContents.on('will-redirect', (event, url) => guardMainFrameNavigation(event, url));
-  mainWindow.webContents.on('did-start-navigation', (_event, url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) trustedRendererDocument = isTrustedRendererUrl(url);
-  });
-  mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
   if (!windowState.hasPosition) mainWindow.center();
   if (windowState.isMaximized) mainWindow.maximize();
   lockPageZoom(mainWindow);
@@ -892,10 +676,7 @@ function createWindow() {
   mainWindow.on('move', () => scheduleSaveWindowState(mainWindow));
   mainWindow.on('maximize', () => scheduleSaveWindowState(mainWindow));
   mainWindow.on('unmaximize', () => scheduleSaveWindowState(mainWindow));
-  mainWindow.on('closed', () => {
-    trustedRendererDocument = false;
-    mainWindow = null;
-  });
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
 function lockPageZoom(win) {
@@ -917,11 +698,10 @@ function lockPageZoom(win) {
 }
 
 // ── ipc:原生文件/文件夹选择;返回 {path,isDir} 与前端契约一致 ──
-handleTrustedIpc('pick-paths', async (_e, defaultPath) => {
-  const safeDefaultPath = optionalIpcPath(defaultPath);
+ipcMain.handle('pick-paths', async (_e, defaultPath) => {
   const res = await dialog.showOpenDialog(mainWindow ?? undefined, {
     properties: ['openFile', 'openDirectory', 'multiSelections'],
-    defaultPath: safeDefaultPath,
+    defaultPath: defaultPath || undefined,
   });
   if (res.canceled) return [];
   return res.filePaths.map((p) => {
@@ -931,60 +711,44 @@ handleTrustedIpc('pick-paths', async (_e, defaultPath) => {
   });
 });
 
-handleTrustedIpc('pick-folder', async (_e, defaultPath) => {
-  const safeDefaultPath = optionalIpcPath(defaultPath);
+ipcMain.handle('pick-folder', async (_e, defaultPath) => {
   const res = await dialog.showOpenDialog(mainWindow ?? undefined, {
     properties: ['openDirectory'],
-    defaultPath: safeDefaultPath,
+    defaultPath: defaultPath || undefined,
   });
   return res.canceled || !res.filePaths.length ? null : res.filePaths[0];
 });
 
-handleTrustedIpc('reveal-in-finder', async (_e, p) => {
-  try { shell.showItemInFolder(requiredIpcPath(p)); return true; } catch { return false; }
+ipcMain.handle('reveal-in-finder', async (_e, p) => {
+  try { shell.showItemInFolder(String(p || '')); return true; } catch { return false; }
 });
 
-// 工作区本地目录:项目 = ~/.pi-desktop/projects/<id>
-handleTrustedIpc('workspace-path', async (_e, wsId) => {
-  const rawId = String(wsId || '').trim();
-  const safeId = safeWorkspaceSegment(rawId);
-  if (!rawId || rawId !== safeId || rawId === '.' || rawId === '..') throw new Error('工作区标识无效');
-  const root = path.join(PROJECTS_ROOT, safeId);
+// 工作区本地目录:项目 = ~/.yiw/projects/<id>
+ipcMain.handle('workspace-path', async (_e, wsId) => {
+  const root = path.join(PROJECTS_ROOT, String(wsId || ''));
   registerLocalFileRoot(root);
   return root;
 });
 
-handleTrustedIpc('register-local-file-root', async (_e, rootPath) => {
-  const root = requiredIpcPath(rootPath);
-  if (!path.isAbsolute(root)) throw new Error('本地文件根目录必须是绝对路径');
-  return Boolean(registerLocalFileRoot(root));
+ipcMain.handle('register-local-file-root', async (_e, rootPath) => {
+  return Boolean(registerLocalFileRoot(rootPath));
 });
 
-handleTrustedIpc('save-pasted-text-attachment', async (_e, payload) => {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('附件参数无效');
-  const content = String(payload.content || '');
-  if (Buffer.byteLength(content, 'utf8') > MAX_IPC_BODY_BYTES) throw new Error('粘贴内容过大');
-  const projectId = String(payload.projectId || '');
-  const sessionId = String(payload.sessionId || '');
-  if (projectId.length > 4096 || sessionId.length > 512) throw new Error('附件工作区参数无效');
-  return savePastedTextAttachment({ projectId, sessionId, content });
-});
+ipcMain.handle('is-directory-path', async (_e, targetPath) => isExistingDirectory(String(targetPath || '')));
+ipcMain.handle('save-pasted-text-attachment', async (_e, payload) => savePastedTextAttachment(payload));
+ipcMain.handle('save-dropped-file-attachment', async (_e, payload) => saveDroppedFileAttachment(payload));
 
-handleTrustedIpc('default-data-root', async () => DATA_ROOT);
-handleTrustedIpc('network-settings-load', async () => loadNetworkSettings());
-handleTrustedIpc('network-settings-save', async (_e, settings) => {
-  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('网络设置参数无效');
-  const normalized = normalizeNetworkSettings(settings);
-  if (Object.values(normalized).some((value) => value.length > MAX_IPC_PATH_LENGTH)) throw new Error('网络设置内容过长');
-  const saved = saveNetworkSettings(normalized);
+ipcMain.handle('default-data-root', async () => DATA_ROOT);
+ipcMain.handle('network-settings-load', async () => loadNetworkSettings());
+ipcMain.handle('network-settings-save', async (_e, settings) => {
+  const saved = saveNetworkSettings(settings);
   await applyRendererNetworkProxy(saved);
   return saved;
 });
-handleTrustedIpc('backend-status', async () => backendManager.getState());
-handleTrustedIpc('backend-restart', async () => backendManager.restart());
 
-function requestBackend(req) {
-  const request = normalizeBackendRequest(req);
+// ── ipc:REST 请求 → 进程消息通道交给后端 registry,收集成一次性响应 ──
+// req = { method, url(/api/...?query), headers, body(string|null) };返回 { status, statusText, headers, json|body }。
+ipcMain.handle('api-request', async (_e, req) => {
   return new Promise((resolve) => {
     const id = `q${++reqSeq}`;
     let status = 0;
@@ -992,25 +756,17 @@ function requestBackend(req) {
     let headers = {};
     let binary = false;
     const chunks = [];
-    backendManager.send({ id, ...request }, (m) => {
+    pending.set(id, (m) => {
       if (m.type === 'head') { status = m.status; statusText = m.statusText; headers = m.headers || {}; }
       else if (m.type === 'data') { if (m.b64) binary = true; chunks.push(m.chunk); }
-      else if (m.type === 'error') {
-        const failedStatus = m.code === 'BACKEND_TIMEOUT' ? 504 : 503;
-        resolve({
-          status: status || failedStatus,
-          statusText: m.error || '本地后端不可用',
-          headers: { 'content-type': 'application/json', ...headers },
-          json: { success: false, code: m.code || 'BACKEND_ERROR', message: m.error || '本地后端不可用', data: null },
-        });
-        return true;
-      }
+      else if (m.type === 'error') { pending.delete(id); resolve({ status: status || 0, statusText: m.error || '', headers, body: chunks.join('') }); }
       else if (m.type === 'end') {
+        pending.delete(id);
         if (binary) {
           // 二进制(blob 下载):各块 base64 解码后拼接,整体再 base64 给前端还原 Blob
           const buf = Buffer.concat(chunks.map((c) => Buffer.from(c, 'base64')));
           resolve({ status, statusText, headers, bodyB64: buf.toString('base64') });
-          return true;
+          return;
         }
         const text = chunks.join('');
         const ct = String(headers['content-type'] || '');
@@ -1019,35 +775,27 @@ function requestBackend(req) {
         if (/application\/json/i.test(ct)) { try { json = JSON.parse(text); } catch { body = text; } }
         else body = text;
         resolve({ status, statusText, headers, json, body });
-        return true;
       }
-      return false;
     });
+    backendSend({ id, method: (req.method || 'GET').toUpperCase(), url: req.url || '/', headers: req.headers || {}, body: req.body ?? null, bodyEncoding: req.bodyEncoding });
   });
-}
-
-// ── ipc:REST 请求 → 进程消息通道交给后端 registry,收集成一次性响应 ──
-// req = { method, url(/api/...?query), headers, body(string|null) };返回 { status, statusText, headers, json|body }。
-handleTrustedIpc('api-request', async (_e, req) => requestBackend(req));
+});
 
 // ── ipc:SSE 流式 → 进程消息通道;后端 res.write 的每块经 message 回传,转给渲染层 ──
-// payload = { id, url, method, headers, body };向 `pi-desktop-stream:<id>` 推 {type:'head'|'data'|'end'|'error'}。
-handleTrustedIpc('stream-start', async (e, payload) => {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('流请求参数无效');
-  const id = String(payload.id || '');
-  if (!/^[a-zA-Z0-9-]{1,128}$/.test(id) || backendManager.pending.has(id)) throw new Error('流请求标识无效');
-  const request = normalizeBackendRequest(payload);
-  const send = (msg) => { try { if (!e.sender.isDestroyed()) e.sender.send(`pi-desktop-stream:${id}`, msg); } catch { /* renderer gone */ } };
-  backendManager.send({ id, ...request }, (m) => {
+// payload = { id, url, method, headers, body };向 `yiw-stream:<id>` 推 {type:'head'|'data'|'end'|'error'}。
+ipcMain.handle('stream-start', async (e, payload) => {
+  const { id, url, method, headers, body } = payload || {};
+  const send = (msg) => { try { if (!e.sender.isDestroyed()) e.sender.send(`yiw-stream:${id}`, msg); } catch { /* renderer gone */ } };
+  pending.set(id, (m) => {
     send(m);
-    return m.type === 'end' || m.type === 'error';
-  }, { stream: true });
+    if (m.type === 'end' || m.type === 'error') pending.delete(id);
+  });
+  backendSend({ id, method: (method || 'GET').toUpperCase(), url: url || '/', headers: headers || {}, body: body ?? null });
   return true;
 });
-onTrustedIpc('stream-abort', (_e, rawId) => {
-  const id = String(rawId || '');
-  if (!/^[a-zA-Z0-9-]{1,128}$/.test(id)) throw new Error('流请求标识无效');
-  backendManager.abort(id);
+ipcMain.on('stream-abort', (_e, id) => {
+  pending.delete(id);
+  backendSend({ id, type: 'abort' });
 });
 
 // ── app 生命周期 ──
@@ -1060,12 +808,6 @@ app.whenReady().then(async () => {
     try { app.dock.setIcon(nativeImage.createFromPath(APP_ICON)); } catch { /* ignore */ }
   }
   await applyRendererNetworkProxy();
-  if (process.env.PI_SMOKE_TEST === '1') {
-    packagedSmokeDeadline = setTimeout(() => {
-      console.error('[smoke] packaged flow timed out');
-      app.exit(1);
-    }, 40_000);
-  }
   startBackend();
   createWindow();
   app.on('activate', () => {
@@ -1086,7 +828,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', (event) => {
   isQuitting = true;
-  if (backendStoppedForQuit) return;
+  if (!backendProc || backendStoppedForQuit) return;
   event.preventDefault();
   stopBackend().finally(() => {
     backendStoppedForQuit = true;

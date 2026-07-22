@@ -1,5 +1,4 @@
 import { ModelConfigResolver } from "./llm.js";
-import { resolveCredential } from "../../credentials.js";
 
 function parseExtraConfig(value) {
   if (!value) return {};
@@ -17,18 +16,21 @@ export function createDbModelConfigProvider({ queryOne, notFoundMessage, catchEr
   if (typeof queryOne !== "function") {
     throw new Error("createDbModelConfigProvider requires queryOne");
   }
-  return async ({ project_id, category }) => {
+  return async ({ model_id, project_id, category }) => {
     const requestedCategory = String(category || "PRIMARY").toUpperCase();
-    const strictCategory = requestedCategory === "EMBEDDING";
-    const sql = strictCategory
-      ? `SELECT id, model_name, api_base, api_key, category, extra_config, api_format, is_enabled FROM llm_models
-          WHERE is_enabled=1 AND deleted_at IS NULL AND (project_id = $1 OR project_id IS NULL)
+    const strictCategory = requestedCategory === "EMBEDDING" || requestedCategory === "SECONDARY";
+    const sql = model_id
+      ? `SELECT id, model_name, api_base, api_key, category, extra_config, api_format FROM llm_models
+          WHERE id=$1 AND api_key IS NOT NULL AND deleted_at IS NULL LIMIT 1`
+      : strictCategory
+      ? `SELECT id, model_name, api_base, api_key, category, extra_config, api_format FROM llm_models
+          WHERE api_key IS NOT NULL AND deleted_at IS NULL AND (project_id = $1 OR project_id IS NULL)
             AND category = $2
           ORDER BY (project_id = $1) DESC, created_at DESC LIMIT 1`
-      : `SELECT id, model_name, api_base, api_key, category, extra_config, api_format, is_enabled FROM llm_models
-          WHERE is_enabled=1 AND deleted_at IS NULL AND (project_id = $1 OR project_id IS NULL)
+      : `SELECT id, model_name, api_base, api_key, category, extra_config, api_format FROM llm_models
+          WHERE api_key IS NOT NULL AND deleted_at IS NULL AND (project_id = $1 OR project_id IS NULL)
           ORDER BY (category = COALESCE($2,'PRIMARY')) DESC, (project_id = $1) DESC, created_at DESC LIMIT 1`;
-    const queryPromise = queryOne(sql, [project_id || null, requestedCategory]);
+    const queryPromise = queryOne(sql, model_id ? [model_id] : [project_id || null, requestedCategory]);
     const m = catchErrors ? await queryPromise.catch(() => null) : await queryPromise;
     if (!m) {
       throw new Error(notFoundMessage || `未找到可用模型(category=${requestedCategory})`);
@@ -38,10 +40,10 @@ export function createDbModelConfigProvider({ queryOne, notFoundMessage, catchEr
       id: m.id,
       model_name: m.model_name,
       api_base: m.api_base,
-      api_key: await resolveCredential(m.api_key),
+      api_key: m.api_key,
       category: m.category || category || "PRIMARY",
       supports_streaming: true,
-      is_enabled: m.is_enabled !== 0 && m.is_enabled !== false,
+      is_enabled: true,
       extra_config,
       context_window: extra_config.context_window,
       api_format: m.api_format || "chat_completions",

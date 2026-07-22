@@ -33,13 +33,7 @@ export function positiveInt(value, fallback = undefined) {
 export function normalizePiUsageForTrace(usage) {
   const normalized = normalizeTokenUsage(usage);
   if (!normalized) return null;
-  if (
-    !normalized.total_tokens
-    && !normalized.reasoning_tokens
-    && !normalized.cached_tokens
-    && !normalized.cache_write_tokens
-    && !normalized.cost_usd
-  ) return null;
+  if (!normalized.total_tokens && !normalized.cached_tokens && !normalized.cache_write_tokens && !normalized.cost_usd) return null;
   return normalized;
 }
 
@@ -129,8 +123,14 @@ function normalizeCacheRetention(raw) {
 }
 
 function isDashScopeOpenAIBaseUrl(baseUrl) {
-  const url = String(baseUrl || "").toLowerCase();
-  return url.includes("dashscope") || url.includes("maas.aliyuncs.com");
+  try {
+    const hostname = new URL(String(baseUrl || "")).hostname.toLowerCase().replace(/\.$/, "");
+    const labels = hostname.split(".");
+    if (labels.length !== 3 || labels[1] !== "aliyuncs" || labels[2] !== "com") return false;
+    return labels[0] === "maas" || labels[0] === "dashscope" || labels[0].startsWith("dashscope-");
+  } catch {
+    return false;
+  }
 }
 
 function resolvePiCompat(cfg, { api, baseUrl } = {}) {
@@ -235,7 +235,7 @@ export function createPiStreamFn({
     const callerOnPayload = options?.onPayload;
     return baseStreamFn(model, context, {
       ...options,
-      apiKey: apiKey || "unused",
+      apiKey,
       ...(Number(timeoutMs) > 0 ? { timeoutMs: Number(timeoutMs) } : {}),
       ...(cacheRetention && !options?.cacheRetention ? { cacheRetention } : {}),
       onPayload: async (payload, currentModel) => {

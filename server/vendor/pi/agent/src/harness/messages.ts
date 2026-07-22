@@ -1,4 +1,5 @@
 import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import { isHandoffAssistantMessage, prepareHandoffMessageForLlm } from "../message-conversion.ts";
 import type { AgentMessage } from "../types.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
@@ -152,8 +153,10 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						],
 						timestamp: m.timestamp,
 					};
+				case "assistant": {
+					return isHandoffAssistantMessage(m) ? prepareHandoffMessageForLlm(m) : m;
+				}
 				case "user":
-				case "assistant":
 				case "toolResult":
 					return m;
 				default:

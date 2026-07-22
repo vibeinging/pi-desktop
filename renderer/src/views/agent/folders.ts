@@ -2,7 +2,7 @@
 //   '__chat__'             → 纯聊天 namespace(执行时后端按 session_id 隔离到 __chat__/<session_id>/)
 //   'folder:' + base64url  → 用户「打开文件夹」选择的本地目录
 //   UUID                   → 项目工作区
-import type { Workspace } from './AgentNav'
+import type { Workspace } from './YiWNav'
 
 export const CHAT_WS: Workspace = { id: '__chat__', name: '纯聊天' }
 
@@ -10,7 +10,7 @@ export interface FolderWs extends Workspace {
   path: string
 }
 
-const KEY = 'agent-folders'
+const KEY = 'yiw-folders'
 
 const b64url = (s: string) =>
   btoa(unescape(encodeURIComponent(s)))
@@ -89,7 +89,7 @@ export async function pickFilesOrFolders(defaultPath?: string | null): Promise<P
 // 是否运行在桌面壳内(Electron)。
 export const isDesktop = () => typeof (window as any).electronAPI !== 'undefined'
 
-// 工作区的本地目录路径：文件夹工作区直接用 path；项目位于 ~/.pi-desktop/projects/<id>。
+// 工作区的本地目录路径:文件夹工作区直接用 path;项目 = ~/.yiw/projects/<id>;纯聊天需 session_id,这里返回 null。
 export async function workspacePath(wsId: string, folderPath?: string): Promise<string | null> {
   if (wsId === CHAT_WS.id) return null
   if (folderPath) return folderPath

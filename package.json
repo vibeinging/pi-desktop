@@ -1,56 +1,25 @@
 {
-  "name": "pi-desktop",
+  "name": "yiw-desktop",
   "private": true,
-  "version": "0.1.0",
-  "productName": "PI Desktop",
-  "description": "A local-first Electron desktop foundation built on earendil-works/pi.",
-  "author": "PI Desktop contributors",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/vibeinging/pi-desktop.git"
-  },
-  "homepage": "https://github.com/vibeinging/pi-desktop#readme",
-  "keywords": [
-    "pi-agent",
-    "electron",
-    "desktop-agent",
-    "mcp",
-    "skills"
-  ],
+  "version": "0.0.1",
+  "productName": "YiW",
   "main": "electron/main.js",
   "engines": {
-    "node": ">=22.19.0",
-    "npm": ">=11.0.0"
+    "node": ">=26.3.0",
+    "npm": ">=11.16.0"
   },
-  "packageManager": "npm@11.16.0",
   "scripts": {
-    "setup": "node scripts/setup.mjs",
-    "config:generate": "node scripts/generate-app-config.mjs",
-    "config:check": "node scripts/generate-app-config.mjs --check",
-    "version:check": "node scripts/version.mjs check",
-    "version:set": "node scripts/version.mjs set",
-    "predev": "npm --prefix server run ensure:pi",
+    "setup": "node scripts/native-npm.mjs --prefix server ci && node scripts/native-npm.mjs --prefix renderer ci && node scripts/native-npm.mjs --prefix electron ci && npm run build:server-pi",
     "dev": "node scripts/dev.mjs",
-    "dev:renderer": "npm --prefix renderer run dev -- --host 127.0.0.1",
-    "dev:electron": "npm --prefix electron run dev",
-    "lint": "npm run lint:renderer && npm run lint:node",
-    "lint:renderer": "npm --prefix renderer run lint",
-    "lint:node": "node scripts/lint-node.mjs",
-    "typecheck": "npm --prefix renderer run typecheck",
-    "test": "npm run test:server && npm run test:renderer && npm run test:electron && npm run test:examples",
-    "test:server": "npm --prefix server test",
-    "test:renderer": "npm --prefix renderer test",
-    "test:electron": "node --test electron/test/*.test.cjs",
-    "test:examples": "node --test examples/project-notes-assistant/server/notes.test.mjs",
-    "check": "npm run config:check && npm run version:check && npm run lint && npm run typecheck && npm test && npm run build",
-    "build": "npm run build:server-pi && npm run build:renderer",
-    "build:renderer": "npm --prefix renderer run build:desktop",
-    "build:server-pi": "npm --prefix server run build:pi",
-    "package:dir": "node scripts/package.mjs --dir",
-    "package": "node scripts/package.mjs",
-    "smoke:package": "node scripts/smoke-packaged.mjs",
-    "release:verify": "node scripts/verify-release.mjs",
-    "release:sbom": "node scripts/generate-sbom.mjs"
+    "build:icons": "electron/node_modules/.bin/electron scripts/generate-icons.cjs",
+    "dev:renderer": "node scripts/native-npm.mjs --prefix renderer run dev -- --host 127.0.0.1",
+    "dev:electron": "node scripts/native-npm.mjs --prefix electron run dev",
+    "typecheck": "node scripts/native-npm.mjs --prefix renderer run typecheck",
+    "test:renderer": "node scripts/native-npm.mjs --prefix renderer test",
+    "test:server": "node --test server/src/engine/modules/miniapp_compiler.test.js server/src/engine/modules/module_registry.test.js server/src/engine/modules/module_validator.test.js server/src/engine/modules/skill_product.test.js server/src/engine/agents/product_tool_catalog.ui_modules.test.js server/src/engine/datasources/unstructured/document_loaders.test.js",
+    "ensure:server-pi": "node scripts/native-npm.mjs --prefix server run ensure:pi",
+    "build:renderer": "npm run ensure:server-pi && node scripts/native-npm.mjs --prefix renderer run build:desktop",
+    "build:server-pi": "node scripts/native-npm.mjs --prefix server run build:pi",
+    "check": "npm run typecheck && npm run test:renderer && npm run test:server && npm run build:renderer"
   }
 }

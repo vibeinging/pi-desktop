@@ -1,15 +1,22 @@
 /**
- * Agent 工作台的会话、模型、Skill、文件和工具确认接口。
+ * L1 用例层 — 工作台 Agent 入口的非流式端点(抽自 routes/agent_chat.js 的 6 个非 SSE 端点)。
  *
- * 处理函数接收 ctx 与 input，返回 { data, message }。工具确认状态由本模块和
- * 流式聊天模块共享，确保等待中的工具调用可以被对应请求继续或拒绝。
+ * 常规契约:async fn(ctx, input) -> { data, message } | throw ApiError;不碰 req/res。
+ * 源里的 res.json({success,data,message}) 与 ok 同形 → 归一成 return { data, message }。
+ * 源里 catch 后 res.json({success:false,...}) 的容错 → 这里 .catch(()=>fallback) 原样照搬语义,
+ *   不向上 throw(保持「失败也回 200 + 空数据」的旧行为,前端按 data 兜底)。
+ *
+ * pendingDecisions:治理确认共享态(toolCallId → resolve)。chat 流 await,/tool-decision resolve。
+ *   与 agent_chat.js 共用同一 Map(本模块导出),不可各持一份。
+ *
+ * 注:app/chat/ 比 routes/ 深一层 → engine 用 ../../engine。
  */
 import { randomUUID } from "node:crypto";
 import { join, relative, resolve } from "node:path";
 import { readdirSync, statSync, readFileSync } from "node:fs";
 import { compactSession, workspaceCwd } from "../../engine/agents/workspace_agent.js";
-import { withSessionLock } from "../../engine/agents/sessionStore.js";
 import { ModelConfigResolver } from "../../engine/core/llm.js";
+import { ensureProjectWorkspaceContext, isAskDataProjectWorkspaceId } from "../../engine/agents/workspace_context.js";
 import {
   PI_TOOL_CATALOG,
   createAppSkill,
@@ -60,6 +67,9 @@ function walkDir(dir, base, depth) {
 function sessionScopedWorkspaceCwd(input) {
   const sessionId = String(input.query?.session_id || input.query?.sessionId || input.params?.sid || "").trim();
   const cwd = workspaceCwd(input.params.pid, sessionId || null);
+  if (isAskDataProjectWorkspaceId(input.params.pid)) {
+    ensureProjectWorkspaceContext({ cwd, projectId: input.params.pid });
+  }
   return cwd;
 }
 
@@ -77,6 +87,33 @@ export async function resolveToolDecision(ctx, input) {
     resolve(!!approved);
   }
   return { data: null, message: "ok" };
+}
+
+// GET /api/agent/projects/:pid/sessions — 工作区历史:统一 agent 会话
+export async function listAgentSessions(ctx, input) {
+  const archived = input.query?.archived === "1" || input.query?.archived === "true";
+  const statusFilter = archived
+    ? "AND COALESCE(status,'active')='archived'"
+    : "AND COALESCE(status,'active')<>'archived'";
+  const rows = await ctx
+    .query(
+      `SELECT id, project_id, title, status, message_count, created_at, updated_at,
+              (
+                SELECT ar.status
+                  FROM agent_runs ar
+                 WHERE ar.session_id=sessions.id AND ar.deleted_at IS NULL
+                 ORDER BY COALESCE(ar.updated_at, ar.created_at) DESC
+                 LIMIT 1
+              ) AS latest_run_status
+         FROM sessions
+        WHERE project_id=$1 AND created_by=$2 AND deleted_at IS NULL
+          AND action_type='agentic_chat'
+          ${statusFilter}
+        ORDER BY updated_at DESC`,
+      [input.params.pid, ctx.userId || ""],
+    )
+    .catch(() => []);
+  return { data: { items: rows }, message: "ok" };
 }
 
 // GET /api/agent/projects/:pid/model — 当前生效模型(PRIMARY)
@@ -107,7 +144,7 @@ export async function getAppAgentSkill(ctx, input) {
 
 // POST /api/agent/skills
 export async function createAppAgentSkill(ctx, input) {
-  const data = await createAppSkill(ctx, input.body || {});
+  const data = await createAppSkill(ctx, input.body || {}, ctx.userId || "");
   return { data, message: "创建 App 技能成功" };
 }
 
@@ -119,12 +156,12 @@ export async function updateAppAgentSkill(ctx, input) {
 
 // DELETE /api/agent/skills/:skillName
 export async function deleteAppAgentSkill(ctx, input) {
-  return { data: await deleteAppSkill(ctx, input.params.skillName), message: "删除 App 技能成功" };
+  return { data: await deleteAppSkill(ctx, input.params.skillName, ctx.userId || ""), message: "删除 App 技能成功" };
 }
 
 // PATCH /api/agent/skills/:skillName/toggle
 export async function toggleAppAgentSkill(ctx, input) {
-  const data = await setAppSkillEnabled(ctx, input.params.skillName, input.body || {});
+  const data = await setAppSkillEnabled(ctx, input.params.skillName, input.body || {}, ctx.userId || "");
   return { data, message: "更新 App 技能状态成功" };
 }
 
@@ -160,15 +197,10 @@ export async function getAgentFile(ctx, input) {
 
 // POST /api/agent/projects/:pid/sessions/:sid/compact — 手动压缩会话上下文(/compact)
 export async function compactAgentSession(ctx, input) {
-  const sid = input.params.sid;
-  return withSessionLock(sid, () => compactAgentSessionUnlocked(ctx, input), { signal: ctx.signal });
-}
-
-async function compactAgentSessionUnlocked(ctx, input) {
   try {
     const sid = input.params.sid;
-    const r = await compactSession({ db: ctx.db, projectId: input.params.pid, sessionId: sid });
-    // 成功压缩 → 往界面会话流插入一条「压缩分割线」标记；模型侧 transcript 已在同一 SQLite 中重写。
+    const r = await compactSession({ projectId: input.params.pid, sessionId: sid });
+    // 成功压缩 → 往会话流插入一条「压缩分割线」标记(进 SQL,刷新后仍在;模型侧 JSONL 已单独压缩)
     if (r.compacted) {
       try {
         const seqRow = await ctx
@@ -188,10 +220,9 @@ async function compactAgentSessionUnlocked(ctx, input) {
         };
         await ctx
           .query(
-            `INSERT INTO session_messages
-              (id,session_id,role,content_items,message_metadata,sequence_number,created_at,updated_at)
-             VALUES ($1,$2,'assistant',$3,$4,$5,now(),now())`,
-            [randomUUID(), sid, JSON.stringify([block]), JSON.stringify({ exclude_from_agent: true }), seq],
+            `INSERT INTO session_messages (id,session_id,role,content_items,sequence_number,created_at,updated_at)
+             VALUES ($1,$2,'assistant',$3,$4,now(),now())`,
+            [randomUUID(), sid, JSON.stringify([block]), seq],
           )
           .catch(() => {});
       } catch {

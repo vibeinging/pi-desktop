@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react'
 import './svg-icon.css'
 
 /**
- * SVG sprite 图标渲染器。
+ * SVG sprite 图标(对齐原 icons/SvgIcon.vue)。
  * 使用 vite-plugin-svg-icons 注入的 symbol：#icon-<dir>-<name> / #icon-<name>。
  */
 export interface SvgIconProps {

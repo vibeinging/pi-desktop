@@ -1,11 +1,11 @@
 // 全局搜索面板(⌘K):跨工作区/会话的客户端标题过滤。
-// 搜索范围来自 AgentShell 已加载的工作区和会话。
-// 门户挂到 .agent-root(主题作用域内、且不被 .agent-zoom 缩放);Esc/点外部关闭。
+// 数据源 = YiWShell 内存中已加载的 allWorkspaces + convByWs,无需后端改动。
+// 门户挂到 .yiw-root(主题作用域内、且不被 .yiw-zoom 缩放);Esc/点外部关闭。
 // 注:仅匹配标题,不搜对话正文 —— 后端暂无全局全文搜索端点。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { IconFolder, IconMessage, IconSearch } from '@tabler/icons-react'
-import styles from './agent.module.scss'
+import styles from './yiw.module.scss'
 
 export interface SearchWorkspace {
   id: string
@@ -103,7 +103,7 @@ export default function SearchPalette({
     }
   }
 
-  const host = (typeof document !== 'undefined' && document.querySelector('.agent-root')) || document.body
+  const host = (typeof document !== 'undefined' && document.querySelector('.yiw-root')) || document.body
 
   return createPortal(
     <div className={styles.searchMask} onMouseDown={onClose}>

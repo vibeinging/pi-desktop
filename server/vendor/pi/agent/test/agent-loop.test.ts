@@ -1189,6 +1189,305 @@ describe("agentLoop with AgentMessage", () => {
 		expect(events.filter((event) => event.type === "turn_end")).toHaveLength(1);
 	});
 
+	it("should promote a complete tool handoff into the parent assistant transcript", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "delegate",
+			label: "Delegate",
+			description: "Delegate work",
+			parameters: toolSchema,
+			executionMode: "sequential",
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: JSON.stringify({ status: "completed" }) }],
+					details: { value: params.value },
+					handoff: {
+						kind: "final",
+						content: `delegated answer: ${params.value}`,
+						source: {
+							type: "service",
+							name: "query_agent",
+							provider: "delegated-provider",
+							model: "delegated-model",
+						},
+						toolResult: {
+							content: [{ type: "text", text: JSON.stringify({ status: "completed", handed_off: true }) }],
+							details: { status: "completed", handed_off: true },
+						},
+					},
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let llmCalls = 0;
+		const stream = agentLoop([createUserMessage("delegate this")], context, config, undefined, () => {
+			llmCalls++;
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = createAssistantMessage(
+					[{ type: "toolCall", id: "tool-1", name: "delegate", arguments: { value: "hello" } }],
+					"toolUse",
+				);
+				mockStream.push({ type: "done", reason: "toolUse", message });
+			});
+			return mockStream;
+		});
+
+		const events: AgentEvent[] = [];
+		for await (const event of stream) events.push(event);
+		const messages = await stream.result();
+
+		expect(llmCalls).toBe(1);
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+		const finalMessage = messages.at(-1) as AssistantMessage;
+		expect(finalMessage.content).toEqual([{ type: "text", text: "delegated answer: hello" }]);
+		expect(finalMessage.provider).toBe("delegated-provider");
+		expect(finalMessage.model).toBe("delegated-model");
+		expect(finalMessage).toMatchObject({
+			handoffMetadata: {
+				kind: "final",
+				toolCallIds: ["tool-1"],
+				sources: [
+					{
+						type: "service",
+						name: "query_agent",
+						provider: "delegated-provider",
+						model: "delegated-model",
+					},
+				],
+			},
+		});
+		const compactToolResult = messages.find((message) => message.role === "toolResult");
+		expect(compactToolResult).toMatchObject({
+			content: [{ type: "text", text: JSON.stringify({ status: "completed", handed_off: true }) }],
+			details: { status: "completed", handed_off: true },
+		});
+		expect(events.filter((event) => event.type === "tool_handoff")).toEqual([
+			expect.objectContaining({ type: "tool_handoff", toolCallIds: ["tool-1"] }),
+		]);
+		const handoffEventIndex = events.findIndex((event) => event.type === "tool_handoff");
+		const turnEndEventIndex = events.findIndex((event) => event.type === "turn_end");
+		expect(handoffEventIndex).toBeGreaterThan(-1);
+		expect(turnEndEventIndex).toBeGreaterThan(handoffEventIndex);
+		expect(events[turnEndEventIndex]).toMatchObject({ type: "turn_end", message: finalMessage });
+	});
+
+	it.each([
+		{ bad: true },
+		Object.defineProperty({}, Symbol.toPrimitive, {
+			value: () => {
+				throw new Error("must not coerce handoff content");
+			},
+		}),
+		42,
+		["not", "text"],
+	])("should reject a non-string handoff payload and return to the parent model", async (badContent) => {
+		const toolSchema = Type.Object({});
+		const tool: AgentTool<typeof toolSchema, undefined> = {
+			name: "invalid_handoff",
+			label: "Invalid handoff",
+			description: "Return an invalid runtime payload",
+			parameters: toolSchema,
+			async execute() {
+				return {
+					content: [{ type: "text", text: "full tool result" }],
+					details: undefined,
+					handoff: { kind: "final", content: badContent } as never,
+				};
+			},
+		};
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		let llmCalls = 0;
+		const stream = agentLoop(
+			[createUserMessage("run invalid handoff")],
+			context,
+			{ model: createModel(), convertToLlm: identityConverter },
+			undefined,
+			() => {
+				const mockStream = new MockAssistantStream();
+				const call = llmCalls++;
+				queueMicrotask(() => {
+					const message =
+						call === 0
+							? createAssistantMessage(
+								[{ type: "toolCall", id: "tool-invalid", name: "invalid_handoff", arguments: {} }],
+								"toolUse",
+							)
+							: createAssistantMessage([{ type: "text", text: "parent fallback" }]);
+					mockStream.push({ type: "done", reason: message.stopReason, message });
+				});
+				return mockStream;
+			},
+		);
+		const events: AgentEvent[] = [];
+		for await (const event of stream) events.push(event);
+		const messages = await stream.result();
+		expect(llmCalls).toBe(2);
+		expect(events.some((event) => event.type === "tool_handoff")).toBe(false);
+		expect((messages.at(-1) as AssistantMessage).content).toEqual([{ type: "text", text: "parent fallback" }]);
+	});
+
+	it("should let afterToolCall explicitly clear a valid handoff", async () => {
+		const toolSchema = Type.Object({});
+		const tool: AgentTool<typeof toolSchema, undefined> = {
+			name: "governed_handoff",
+			label: "Governed handoff",
+			description: "Return a governed answer",
+			parameters: toolSchema,
+			async execute() {
+				return {
+					content: [{ type: "text", text: "tool answer" }],
+					details: undefined,
+					handoff: { kind: "final", content: "must be reviewed" },
+				};
+			},
+		};
+		let hookSawHandoff = false;
+		let llmCalls = 0;
+		const stream = agentLoop(
+			[createUserMessage("run governed handoff")],
+			{ systemPrompt: "", messages: [], tools: [tool] },
+			{
+				model: createModel(),
+				convertToLlm: identityConverter,
+				afterToolCall: async ({ result }) => {
+					hookSawHandoff = result.handoff?.content === "must be reviewed";
+					return { handoff: null };
+				},
+			},
+			undefined,
+			() => {
+				const mockStream = new MockAssistantStream();
+				const call = llmCalls++;
+				queueMicrotask(() => {
+					const message =
+						call === 0
+							? createAssistantMessage(
+								[{ type: "toolCall", id: "tool-governed", name: "governed_handoff", arguments: {} }],
+								"toolUse",
+							)
+							: createAssistantMessage([{ type: "text", text: "reviewed by parent" }]);
+					mockStream.push({ type: "done", reason: message.stopReason, message });
+				});
+				return mockStream;
+			},
+		);
+		const events: AgentEvent[] = [];
+		for await (const event of stream) events.push(event);
+		expect(await stream.result()).toHaveLength(4);
+		expect(hookSawHandoff).toBe(true);
+		expect(llmCalls).toBe(2);
+		expect(events.some((event) => event.type === "tool_handoff")).toBe(false);
+	});
+
+	it("should not promote a handoff after cancellation or from a partial sequential batch", async () => {
+		const controller = new AbortController();
+		const executions: string[] = [];
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, undefined> = {
+			name: "cancelled_handoff",
+			label: "Cancelled handoff",
+			description: "Abort during the first call",
+			parameters: toolSchema,
+			executionMode: "sequential",
+			async execute(_toolCallId, params) {
+				executions.push(params.value);
+				if (params.value === "first") controller.abort();
+				return {
+					content: [{ type: "text", text: params.value }],
+					details: undefined,
+					handoff: { kind: "final", content: `answer ${params.value}` },
+				};
+			},
+		};
+		const stream = agentLoop(
+			[createUserMessage("cancel batch")],
+			{ systemPrompt: "", messages: [], tools: [tool] },
+			{ model: createModel(), convertToLlm: identityConverter },
+			controller.signal,
+			() => {
+				const mockStream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message = createAssistantMessage(
+						[
+							{ type: "toolCall", id: "tool-first", name: "cancelled_handoff", arguments: { value: "first" } },
+							{ type: "toolCall", id: "tool-second", name: "cancelled_handoff", arguments: { value: "second" } },
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				});
+				return mockStream;
+			},
+		);
+		const events: AgentEvent[] = [];
+		for await (const event of stream) events.push(event);
+		const messages = await stream.result();
+		expect(executions).toEqual(["first"]);
+		expect(events.some((event) => event.type === "tool_handoff")).toBe(false);
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+	});
+
+	it("should not apply a handoff to a mixed ordinary and delegated tool batch", async () => {
+		const toolSchema = Type.Object({ final: Type.Boolean() });
+		const tool: AgentTool<typeof toolSchema, { final: boolean }> = {
+			name: "mixed",
+			label: "Mixed",
+			description: "Return an optional handoff",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: params.final ? "delegated" : "ordinary" }],
+					details: { final: params.final },
+					...(params.final ? { handoff: { kind: "final" as const, content: "delegated answer" } } : {}),
+				};
+			},
+		};
+
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			toolExecution: "parallel",
+		};
+		let callIndex = 0;
+		const stream = agentLoop([createUserMessage("run both")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = callIndex === 0
+					? createAssistantMessage(
+						[
+							{ type: "toolCall", id: "tool-1", name: "mixed", arguments: { final: true } },
+							{ type: "toolCall", id: "tool-2", name: "mixed", arguments: { final: false } },
+						],
+						"toolUse",
+					)
+					: createAssistantMessage([{ type: "text", text: "combined by parent" }]);
+				callIndex++;
+				mockStream.push({ type: "done", reason: message.stopReason, message });
+			});
+			return mockStream;
+		});
+
+		const events: AgentEvent[] = [];
+		for await (const event of stream) events.push(event);
+		const messages = await stream.result();
+
+		expect(callIndex).toBe(2);
+		expect(events.some((event) => event.type === "tool_handoff")).toBe(false);
+		expect((messages.at(-1) as AssistantMessage).content).toEqual([{ type: "text", text: "combined by parent" }]);
+	});
+
 	it("should continue after parallel tool calls when not all tool results terminate", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {

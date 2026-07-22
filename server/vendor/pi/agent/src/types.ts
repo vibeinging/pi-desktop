@@ -69,6 +69,7 @@ export interface BeforeToolCallResult {
  * - `content`: if provided, replaces the tool result content array in full
  * - `details`: if provided, replaces the tool result details value in full
  * - `isError`: if provided, replaces the tool result error flag
+ * - `handoff`: if provided, replaces the delegated final-answer handoff
  * - `terminate`: if provided, replaces the early-termination hint
  *
  * Omitted fields keep the original executed tool result values.
@@ -78,6 +79,12 @@ export interface AfterToolCallResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
 	isError?: boolean;
+	/**
+	 * Optional final answer handed back by a delegated tool or sub-agent.
+	 * When every tool result in a batch provides a final handoff, the loop appends
+	 * one synthetic assistant message and stops without another model request.
+	 */
+	handoff?: AgentToolHandoff | null;
 	/**
 	 * Hint that the agent should stop after the current tool batch.
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
@@ -273,6 +280,7 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * - `content` replaces the full content array
 	 * - `details` replaces the full details payload
 	 * - `isError` replaces the error flag
+	 * - `handoff` replaces the delegated final-answer handoff
 	 * - `terminate` replaces the early-termination hint
 	 *
 	 * Any omitted fields keep their original values. No deep merge is performed.
@@ -353,11 +361,57 @@ export interface AgentToolResult<T> {
 	/** Arbitrary structured details for logs or UI rendering. */
 	details: T;
 	/**
+	 * Final answer produced by a delegated tool or sub-agent.
+	 * A handoff is applied only when every finalized result in the current tool
+	 * batch provides one, so mixed ordinary/delegated tool batches still return
+	 * to the model for normal synthesis.
+	 */
+	handoff?: AgentToolHandoff;
+	/**
 	 * Hint that the agent should stop after the current tool batch.
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
 	 */
 	terminate?: boolean;
 }
+
+/** Provenance for a delegated answer. Persisted with the synthetic assistant message. */
+export interface AgentToolHandoffSource {
+	type: "service" | "subagent" | "tool";
+	name?: string;
+	provider?: string;
+	model?: string;
+}
+
+/** Compact tool result used only after the whole batch is accepted as a handoff. */
+export interface AgentToolHandoffReceipt {
+	content: (TextContent | ImageContent)[];
+	details?: unknown;
+}
+
+/** A delegated tool's final answer promoted into the parent transcript. */
+export interface AgentToolHandoff {
+	kind: "final";
+	content: string;
+	/** Identifies the service, sub-agent, or tool that actually produced the answer. */
+	source?: AgentToolHandoffSource;
+	/**
+	 * Optional compact replacement for the persisted tool result. It is used only
+	 * when every tool call in the batch completes with a valid handoff. Mixed or
+	 * rejected batches keep the original full tool result for parent synthesis.
+	 */
+	toolResult?: AgentToolHandoffReceipt;
+}
+
+/** Metadata attached to a synthetic assistant message created from tool handoffs. */
+export interface AgentHandoffMetadata {
+	kind: "final";
+	toolCallIds: string[];
+	sources: AgentToolHandoffSource[];
+}
+
+export type AgentHandoffAssistantMessage = AssistantMessage & {
+	handoffMetadata: AgentHandoffMetadata;
+};
 
 /**
  * Callback used by tools to stream partial execution updates.
@@ -422,6 +476,8 @@ export type AgentEvent =
 	// Only emitted for assistant messages during streaming
 	| { type: "message_update"; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }
 	| { type: "message_end"; message: AgentMessage }
+	// A terminal tool batch promoted into one synthetic assistant message.
+	| { type: "tool_handoff"; message: AgentHandoffAssistantMessage; toolCallIds: string[] }
 	// Tool execution lifecycle
 	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
 	| { type: "tool_execution_update"; toolCallId: string; toolName: string; args: any; partialResult: any }

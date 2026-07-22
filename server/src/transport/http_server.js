@@ -1,69 +1,21 @@
 // L0 传输适配层(HTTP 侧):薄 express,把 TCP 请求喂进**同一个 registry/usecase/信封**。
-// 仅用于 eval/CI(独立启动 或 PI_TCP=1);app 路径走 ipc_server,不经这里。
-// 与 ipc_server 共享 router/envelope/ctx —— eval 测的就是 app 跑的同一份用例代码。
+// 仅用于 eval/CI(独立启动 或 YIW_TCP=1);app 路径走 ipc_server,不经这里。
+// 与 ipc_server 共享 router/auth/envelope/ctx —— eval 测的就是 app 跑的同一份用例代码。
 import express from 'express';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import cors from 'cors';
 import { makeRouter } from './router.js';
+import { verifyToken, resolveUserId, DESKTOP_NO_AUTH } from './auth.js';
 import { okBody, failBody } from './envelope.js';
 import { makeCtx } from '../ctx.js';
 import { ApiError } from '../errors.js';
 import { ROUTES } from './registry.js';
-import { createStreamEvent, StreamEventType } from './agent_stream_protocol.js';
+import { createStreamEvent, StreamEventType } from '../engine/stream/agent_stream_protocol.js';
 
 const match = makeRouter(ROUTES);
 
-function configuredBrowserAccess() {
-  const origins = new Set(
-    String(process.env.PI_ALLOWED_ORIGINS || '')
-      .split(',')
-      .map((value) => value.trim().replace(/\/$/, ''))
-      .filter(Boolean),
-  );
-  const configuredToken = String(process.env.PI_HTTP_TOKEN || '').trim();
-  return {
-    origins,
-    token: configuredToken || randomBytes(32).toString('base64url'),
-    configuredToken: Boolean(configuredToken),
-  };
-}
-
-function tokenMatches(actual, expected) {
-  const left = Buffer.from(String(actual || ''));
-  const right = Buffer.from(String(expected || ''));
-  return left.length === right.length && left.length > 0 && timingSafeEqual(left, right);
-}
-
-function installBrowserBoundary(app) {
-  const access = configuredBrowserAccess();
-  app.use((req, res, next) => {
-    const rawOrigin = String(req.headers.origin || '').trim();
-    if (!rawOrigin) return next(); // curl / CI / 本机进程不属于浏览器跨域请求。
-
-    const origin = rawOrigin.replace(/\/$/, '');
-    if (!access.origins.has(origin)) {
-      return res.status(403).json(failBody('不允许的浏览器来源', 403));
-    }
-
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-PI-Desktop-Token');
-    if (req.method === 'OPTIONS') return res.status(204).end();
-
-    if (!tokenMatches(req.headers['x-pi-desktop-token'], access.token)) {
-      return res.status(403).json(failBody('本地访问令牌无效', 403));
-    }
-    return next();
-  });
-
-  if (access.origins.size && !access.configuredToken) {
-    console.warn('[server] 已配置 PI_ALLOWED_ORIGINS，但未配置 PI_HTTP_TOKEN；浏览器请求将无法取得本次随机令牌');
-  }
-}
-
 export function startHttpServer(port) {
   const app = express();
-  installBrowserBoundary(app);
+  app.use(cors());
   app.use(express.json({ limit: '20mb' }));
   app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
@@ -72,6 +24,12 @@ export function startHttpServer(port) {
     if (!hit) return res.status(404).json(failBody(`接口未找到: ${req.method} ${req.path}`, 404));
     const { route, params } = hit;
     try {
+      let userId = null;
+      if (route.auth !== false) {
+        // DESKTOP_NO_AUTH:本地 eval/CI 场景跳过 token(免鉴权),视为内置用户
+        userId = resolveUserId(req.headers);
+        if (!userId) return res.status(401).json(failBody('未登录或令牌缺失', 401));
+      }
       const input = { params, query: req.query || {}, body: req.body || {}, headers: req.headers || {} };
 
       // 流式 SSE
@@ -80,13 +38,10 @@ export function startHttpServer(port) {
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
         const controller = new AbortController();
-        const onResponseClosed = () => {
-          if (!res.writableEnded) controller.abort();
-        };
-        res.once('close', onResponseClosed);
+        req.on('close', () => controller.abort());
         const emit = (event) => { try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { /* closed */ } };
         try {
-          await route.fn(makeCtx({ signal: controller.signal }), input, emit);
+          await route.fn(makeCtx({ userId, signal: controller.signal }), input, emit);
         } catch (e) {
           const m = e instanceof ApiError ? e.message : '服务错误: ' + (e?.message || e);
           emit(createStreamEvent({
@@ -103,13 +58,12 @@ export function startHttpServer(port) {
           }));
           emit(createStreamEvent({ type: StreamEventType.RUN_FAILED, payload: { status: 'failed', message: m } }));
         } finally {
-          res.off('close', onResponseClosed);
           try { res.write('data: [DONE]\n\n'); res.end(); } catch { /* closed */ }
         }
         return;
       }
 
-      const result = await route.fn(makeCtx({}), input);
+      const result = await route.fn(makeCtx({ userId }), input);
       // 二进制下载
       if (result && result._binary) {
         const buf = Buffer.isBuffer(result.data) ? result.data : Buffer.from(result.data ?? '');
@@ -127,7 +81,8 @@ export function startHttpServer(port) {
   });
 
   // 仅绑 loopback:HTTP server 专供本机 eval/CI 复用运行中的 server 实例,不暴露到局域网。
-  const srv = app.listen(port, '127.0.0.1', () => console.log(`🟢 desktop server (node) HTTP(eval/CI) on http://127.0.0.1:${port}`));
+  // (DESKTOP_NO_AUTH 免鉴权开启时尤为必要;即便未开启,本端口服務于可信本地進程。)
+  const srv = app.listen(port, '127.0.0.1', () => console.log(`🟢 desktop server (node) HTTP(eval/CI) on http://127.0.0.1:${port}${DESKTOP_NO_AUTH ? ' [NO_AUTH]' : ''}`));
   srv.on('error', (e) => {
     if (e && e.code === 'EADDRINUSE') console.warn(`[server] TCP ${port} 已占用,跳过监听`);
     else throw e;

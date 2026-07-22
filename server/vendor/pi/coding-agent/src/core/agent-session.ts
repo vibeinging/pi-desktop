@@ -113,13 +113,18 @@ export interface ParsedSkillBlock {
  * Returns null if the text doesn't contain a skill block.
  */
 export function parseSkillBlock(text: string): ParsedSkillBlock | null {
-	const match = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/);
-	if (!match) return null;
+	const header = /^<skill name="([^"\n]+)" location="([^"\n]+)">\n/.exec(text);
+	if (!header) return null;
+	const closingToken = "\n</skill>";
+	const closingIndex = text.lastIndexOf(closingToken);
+	if (closingIndex < header[0].length) return null;
+	const suffix = text.slice(closingIndex + closingToken.length);
+	if (suffix && (!suffix.startsWith("\n\n") || suffix.length === 2)) return null;
 	return {
-		name: match[1],
-		location: match[2],
-		content: match[3],
-		userMessage: match[4]?.trim() || undefined,
+		name: header[1],
+		location: header[2],
+		content: text.slice(header[0].length, closingIndex),
+		userMessage: suffix.slice(2).trim() || undefined,
 	};
 }
 
@@ -453,20 +458,24 @@ export class AgentSession {
 				toolName: toolCall.name,
 				toolCallId: toolCall.id,
 				input: args as Record<string, unknown>,
-				content: result.content,
-				details: result.details,
-				isError,
-			});
+					content: result.content,
+					details: result.details,
+					isError,
+					...(result.handoff ? { handoff: result.handoff } : {}),
+					...(result.terminate !== undefined ? { terminate: result.terminate } : {}),
+				});
 
 			if (!hookResult) {
 				return undefined;
 			}
 
 			return {
-				content: hookResult.content,
-				details: hookResult.details,
-				isError: hookResult.isError ?? isError,
-			};
+					content: hookResult.content,
+					details: hookResult.details,
+					isError: hookResult.isError ?? isError,
+					...(Object.hasOwn(hookResult, "handoff") ? { handoff: hookResult.handoff } : {}),
+					...(Object.hasOwn(hookResult, "terminate") ? { terminate: hookResult.terminate } : {}),
+				};
 		};
 	}
 

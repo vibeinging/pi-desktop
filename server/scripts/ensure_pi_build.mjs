@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 
 const SERVER_DIR = dirname(dirname(fileURLToPath(import.meta.url)))
 const PI_DIR = join(SERVER_DIR, 'vendor', 'pi')
-const PI_BASE_CONFIG = join(SERVER_DIR, 'vendor', 'tsconfig.base.json')
 const PI_PACKAGES = ['tui', 'ai', 'agent', 'coding-agent']
 
 function latestMtime(path) {
@@ -27,14 +26,13 @@ function stalePackage(name) {
   const sourceMtime = Math.max(
     latestMtime(join(packageDir, 'src')),
     latestMtime(join(packageDir, 'package.json')),
-    latestMtime(join(packageDir, 'tsconfig.build.json')),
-    latestMtime(PI_BASE_CONFIG)
+    latestMtime(join(packageDir, 'tsconfig.build.json'))
   )
   return sourceMtime > statSync(distEntry).mtimeMs ? name : ''
 }
 
-if (process.env.PI_SKIP_PI_BUILD === '1') {
-  console.warn('[pi-build] 已按 PI_SKIP_PI_BUILD=1 跳过检查')
+if (process.env.YIW_SKIP_PI_BUILD === '1') {
+  console.warn('[pi-build] 已按 YIW_SKIP_PI_BUILD=1 跳过检查')
   process.exit(0)
 }
 
@@ -45,14 +43,9 @@ if (!stale.length) {
 }
 
 console.log(`[pi-build] 需要更新: ${stale.join(', ')}`)
-const npmCli = process.env.npm_execpath && existsSync(process.env.npm_execpath)
-  ? process.env.npm_execpath
-  : ''
-const npmCommand = npmCli ? process.execPath : (process.platform === 'win32' ? 'npm.cmd' : 'npm')
-const npmArgs = npmCli ? [npmCli, 'run', 'build:pi'] : ['run', 'build:pi']
-execFileSync(npmCommand, npmArgs, {
+const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+execFileSync(npmCommand, ['run', 'build:pi'], {
   cwd: SERVER_DIR,
   env: process.env,
-  stdio: 'inherit',
-  shell: process.platform === 'win32' && !npmCli
+  stdio: 'inherit'
 })

@@ -427,9 +427,17 @@ export class AgentHarness<
 					content: result.content,
 					details: result.details,
 					isError,
+					handoff: result.handoff,
+					terminate: result.terminate,
 				});
 				return patch
-					? { content: patch.content, details: patch.details, isError: patch.isError, terminate: patch.terminate }
+					? {
+							...(Object.hasOwn(patch, "content") ? { content: patch.content } : {}),
+							...(Object.hasOwn(patch, "details") ? { details: patch.details } : {}),
+							...(Object.hasOwn(patch, "isError") ? { isError: patch.isError } : {}),
+							...(Object.hasOwn(patch, "handoff") ? { handoff: patch.handoff } : {}),
+							...(Object.hasOwn(patch, "terminate") ? { terminate: patch.terminate } : {}),
+						}
 					: undefined;
 			},
 			prepareNextTurn: async () => {

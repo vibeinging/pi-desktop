@@ -465,6 +465,52 @@ describe("AgentHarness", () => {
 		});
 	});
 
+	it("exposes an existing handoff to tool_result hooks and lets the hook clear it", async () => {
+		const registration = newFaux();
+		registration.setResponses([
+			() =>
+				fauxAssistantMessage(fauxToolCall("calculate", { expression: "2 + 2" }, { id: "call-handoff" }), {
+					stopReason: "toolUse",
+				}),
+			() => fauxAssistantMessage("reviewed by parent"),
+		]);
+		const session = new Session(new InMemorySessionStorage());
+		const governedTool: AgentTool<typeof calculateTool.parameters, undefined> = {
+			...calculateTool,
+			execute: async () => ({
+				content: [{ type: "text", text: "delegated result" }],
+				details: undefined,
+				handoff: { kind: "final", content: "must not bypass policy" },
+			}),
+		};
+		const harness = new AgentHarness({
+			models,
+			env: new NodeExecutionEnv({ cwd: process.cwd() }),
+			session,
+			model: registration.getModel(),
+			tools: [governedTool],
+		});
+		let hookSawHandoff = false;
+		let emittedHandoff = false;
+		harness.on("tool_result", (event) => {
+			hookSawHandoff = event.handoff?.content === "must not bypass policy";
+			return { handoff: null };
+		});
+		harness.subscribe((event) => {
+			if (event.type === "tool_handoff") emittedHandoff = true;
+		});
+
+		await harness.prompt("hello");
+
+		expect(hookSawHandoff).toBe(true);
+		expect(emittedHandoff).toBe(false);
+		expect(registration.state.callCount).toBe(2);
+		const messages = (await session.getEntries()).flatMap((entry) =>
+			entry.type === "message" ? [entry.message] : [],
+		);
+		expect(messages.at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: "reviewed by parent" }] });
+	});
+
 	it("preserves app tool types for getters and update events", async () => {
 		const session = new Session(new InMemorySessionStorage());
 		const env = new NodeExecutionEnv({ cwd: process.cwd() });

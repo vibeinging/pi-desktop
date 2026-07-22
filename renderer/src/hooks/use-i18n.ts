@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import i18n from '@/lang'
 
 /**
- * 基于 react-i18next 的 i18n hook。
+ * i18n hook(对齐原 hooks/use-i18n.ts，底层换成 react-i18next)。
  * 组件内：const { t } = useI18n()
  */
 export const useI18n = () => useTranslation()

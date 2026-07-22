@@ -1,6 +1,6 @@
 // ===== 角色配色（hero 左侧色条 + icon 颜色）=====
-$primary-from: #6366f1;
-$secondary-from: #8b5cf6;
+$primary-from: #17483e;
+$secondary-from: #2f6f60;
 $embedding-from: #0d9488;
 
 .modelFormInline {
@@ -42,11 +42,11 @@ $embedding-from: #0d9488;
 
     &.rolePrimary {
       &::before { background: $primary-from; }
-      .roleHeroIcon { color: $primary-from; background: #eef2ff; }
+      .roleHeroIcon { color: $primary-from; background: #edf3ef; }
     }
     &.roleSecondary {
       &::before { background: $secondary-from; }
-      .roleHeroIcon { color: $secondary-from; background: #f5f3ff; }
+      .roleHeroIcon { color: $secondary-from; background: #f7f4ec; }
     }
     &.roleEmbedding {
       &::before { background: $embedding-from; }
@@ -317,7 +317,7 @@ $embedding-from: #0d9488;
   }
 }
 
-// 移动端布局断点
+// 移动端断点（对齐 webui responsive.scss 的 @include mobile）
 @media (max-width: 767px) {
   .modelFormInline {
     padding: 14px 14px;

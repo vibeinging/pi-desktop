@@ -1,5 +1,16 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { permissionManager } from '@/permission/index'
+
+export const PERMISSIONS = {
+  ASK_DATA: 'ask_data',
+  DATA_MANAGE: 'data_manage',
+  MODEL_SERVICE_MANAGE: 'model_service_manage',
+  REPORT_MANAGE: 'report_manage',
+  MEMBER_MANAGE: 'member_manage'
+} as const
+
+export const ALL_PERMISSIONS = Object.values(PERMISSIONS)
 
 export interface Project {
   id: string
@@ -59,6 +70,7 @@ export const useProjectStore = create<ProjectState>()(
             lastDetailFetchedAt: Date.now()
           })
         }
+        permissionManager.clearCache()
       },
       hasPermission: (permission) => get().currentPermissions.includes(permission),
       hasAnyPermission: (permissions) => permissions.some((p) => get().hasPermission(p)),
@@ -79,7 +91,7 @@ export const useProjectStore = create<ProjectState>()(
   )
 )
 
-/** 项目状态选择器 */
+/** 派生 getter（对齐 Pinia getters），供选择器使用 */
 export const projectGetters = {
   hasProject: (s: ProjectState) => !!s.currentProject,
   currentProjectId: (s: ProjectState) => s.currentProject?.id || null,

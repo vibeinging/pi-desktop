@@ -3,10 +3,6 @@
 import { randomUUID } from "crypto";
 import { ApiError } from "../../errors.js";
 import {
-  deleteCredentialRefs,
-  storeMcpCredentials,
-} from "../../credentials.js";
-import {
   discoverMcpProviderTools,
   disposeAllMcpRuntimes,
   disposeProjectMcpRuntimes,
@@ -17,17 +13,9 @@ import {
 
 const APP_MCP_COLS = `id, provider_name, transport, command, args, env, is_active, default_enabled,
   last_discovered_at, last_error, created_at, updated_at`;
-const SECRET_MASK = "********";
 
 export function mcpRow(r) {
-  const row = normalizeMcpProviderRow(r);
-  if (!row) return row;
-  return {
-    ...row,
-    env: Object.fromEntries(
-      Object.entries(row.env || {}).map(([key, value]) => [key, value ? SECRET_MASK : ""]),
-    ),
-  };
+  return normalizeMcpProviderRow(r);
 }
 
 function toBool(value) {
@@ -52,14 +40,6 @@ function normalizeEnv(env) {
     out[k] = value == null ? "" : String(value);
   }
   return out;
-}
-
-function mergeMaskedEnv(nextEnv, currentEnv) {
-  const next = normalizeEnv(nextEnv);
-  const current = normalizeEnv(currentEnv);
-  return Object.fromEntries(
-    Object.entries(next).map(([key, value]) => [key, value.includes("****") ? current[key] || "" : value]),
-  );
 }
 
 export function normalizeMcpProviderName(value) {
@@ -121,7 +101,7 @@ async function findProjectBindingRow(ctx, projectId, provider) {
   );
 }
 
-async function upsertProjectMcpBinding(ctx, projectId, provider, enabledOverride) {
+async function upsertProjectMcpBinding(ctx, projectId, provider, enabledOverride, userId = "") {
   const inherited = enabledOverride === null || enabledOverride === undefined;
   const effective = inherited ? boolFrom(provider.default_enabled, true) : !!enabledOverride;
   const enabledValue = inherited ? null : enabledOverride ? 1 : 0;
@@ -129,65 +109,48 @@ async function upsertProjectMcpBinding(ctx, projectId, provider, enabledOverride
   if (existing) {
     await ctx.query(
       `UPDATE project_mcp_providers
-          SET provider_id=$3, provider_name=$4, enabled_override=$5, is_enabled=$6, updated_at=now()
+          SET provider_id=$3, provider_name=$4, enabled_override=$5, is_enabled=$6, enabled_by=$7, updated_at=now()
         WHERE project_id=$1 AND id=$2 AND deleted_at IS NULL`,
-      [projectId, existing.id, provider.id, provider.provider_name, enabledValue, effective ? 1 : 0],
+      [projectId, existing.id, provider.id, provider.provider_name, enabledValue, effective ? 1 : 0, userId || null],
     ).catch(() =>
       ctx.query(
         `UPDATE project_mcp_providers
-            SET provider_name=$3, is_enabled=$4, updated_at=now()
+            SET provider_name=$3, is_enabled=$4, enabled_by=$5, updated_at=now()
           WHERE project_id=$1 AND id=$2 AND deleted_at IS NULL`,
-        [projectId, existing.id, provider.provider_name, effective ? 1 : 0],
+        [projectId, existing.id, provider.provider_name, effective ? 1 : 0, userId || null],
       ),
     );
   } else {
-    const deleted = await ctx.queryOne(
-      `SELECT id FROM project_mcp_providers
-        WHERE project_id=$1 AND provider_name=$2 AND deleted_at IS NOT NULL
-        ORDER BY updated_at DESC
-        LIMIT 1`,
-      [projectId, provider.provider_name],
-    ).catch(() => null);
-    if (deleted) {
-      await ctx.query(
-        `UPDATE project_mcp_providers
-            SET provider_id=$3, provider_name=$4, is_enabled=$5,
-                enabled_override=$6, deleted_at=NULL, updated_at=now()
-          WHERE project_id=$1 AND id=$2`,
-        [projectId, deleted.id, provider.id, provider.provider_name, effective ? 1 : 0, enabledValue],
-      );
-    } else {
-      await ctx.query(
+    await ctx.query(
+      `INSERT INTO project_mcp_providers
+         (id, project_id, provider_id, provider_name, is_enabled, enabled_override, enabled_by, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,now(),now())`,
+      [randomUUID(), projectId, provider.id, provider.provider_name, effective ? 1 : 0, enabledValue, userId || null],
+    ).catch(() =>
+      ctx.query(
         `INSERT INTO project_mcp_providers
-           (id, project_id, provider_id, provider_name, is_enabled, enabled_override, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,now(),now())`,
-        [randomUUID(), projectId, provider.id, provider.provider_name, effective ? 1 : 0, enabledValue],
-      ).catch(() =>
-        ctx.query(
-          `INSERT INTO project_mcp_providers
-             (id, project_id, provider_name, is_enabled, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,now(),now())`,
-          [randomUUID(), projectId, provider.provider_name, effective ? 1 : 0],
-        ),
-      );
-    }
+           (id, project_id, provider_name, is_enabled, enabled_by, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,now(),now())`,
+        [randomUUID(), projectId, provider.provider_name, effective ? 1 : 0, userId || null],
+      ),
+    );
   }
   await disposeProjectMcpRuntimes(projectId);
   return getProjectMcpProvider(ctx, projectId, provider.provider_name);
 }
 
-async function clearProjectMcpBinding(ctx, projectId, provider) {
+async function clearProjectMcpBinding(ctx, projectId, provider, userId = "") {
   await ctx.query(
     `UPDATE project_mcp_providers
-        SET deleted_at=now(), updated_at=now()
+        SET deleted_at=now(), deleted_by=$4, updated_at=now()
       WHERE project_id=$1 AND deleted_at IS NULL AND (provider_id=$2 OR provider_name=$3)`,
-    [projectId, provider.id, provider.provider_name],
+    [projectId, provider.id, provider.provider_name, userId || null],
   ).catch(() =>
     ctx.query(
       `UPDATE project_mcp_providers
-          SET deleted_at=now(), updated_at=now()
+          SET deleted_at=now(), deleted_by=$3, updated_at=now()
         WHERE project_id=$1 AND provider_name=$2 AND deleted_at IS NULL`,
-      [projectId, provider.provider_name],
+      [projectId, provider.provider_name, userId || null],
     ),
   );
   await disposeProjectMcpRuntimes(projectId);
@@ -250,45 +213,23 @@ export async function createAppMcpProvider(ctx, input) {
   const existing = await findAppProviderRow(ctx, providerName);
   if (existing) throw new ApiError("MCP Provider 已存在", 409);
 
-  const securedEnv = await storeMcpCredentials(providerName, normalizeEnv(body.env));
-  const values = [
-    body.transport || "stdio",
-    String(body.command || "").trim(),
-    JSON.stringify(normalizeArgs(body.args)),
-    JSON.stringify(securedEnv.values),
-    boolFrom(body.is_active, true) ? 1 : 0,
-    boolFrom(body.default_enabled ?? body.is_enabled, true) ? 1 : 0,
-  ];
-  const deleted = await ctx.queryOne(
-    `SELECT id FROM app_mcp_providers
-      WHERE provider_name=$1 AND deleted_at IS NOT NULL
-      ORDER BY updated_at DESC
-      LIMIT 1`,
-    [providerName],
-  ).catch(() => null);
-  let row;
-  try {
-    row = deleted
-      ? await ctx.queryOne(
-        `UPDATE app_mcp_providers
-            SET transport=$2, command=$3, args=$4, env=$5, is_active=$6,
-                default_enabled=$7, tool_cache=NULL, last_discovered_at=NULL,
-                last_error=NULL, deleted_at=NULL, updated_at=now()
-          WHERE id=$1
-          RETURNING ${APP_MCP_COLS}`,
-        [deleted.id, ...values],
-        )
-      : await ctx.queryOne(
-        `INSERT INTO app_mcp_providers
-           (id, provider_name, transport, command, args, env, is_active, default_enabled, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),now())
-         RETURNING ${APP_MCP_COLS}`,
-          [randomUUID(), providerName, ...values],
-        );
-  } catch (error) {
-    await deleteCredentialRefs(securedEnv.createdRefs);
-    throw error;
-  }
+  const row = await ctx.queryOne(
+    `INSERT INTO app_mcp_providers
+       (id, provider_name, transport, command, args, env, is_active, default_enabled, created_by, updated_by, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,now(),now())
+     RETURNING ${APP_MCP_COLS}`,
+    [
+      randomUUID(),
+      providerName,
+      body.transport || "stdio",
+      String(body.command || "").trim(),
+      JSON.stringify(normalizeArgs(body.args)),
+      JSON.stringify(normalizeEnv(body.env)),
+      boolFrom(body.is_active, true) ? 1 : 0,
+      boolFrom(body.default_enabled ?? body.is_enabled, true) ? 1 : 0,
+      ctx.userId || null,
+    ],
+  );
   await disposeAllMcpRuntimes();
   return { data: mcpRow(row), message: "MCP Provider 创建成功" };
 }
@@ -303,15 +244,9 @@ export async function updateAppMcpProvider(ctx, input) {
   const sets = [];
   const params = [];
   let idx = 1;
-  let securedEnv = null;
-  const currentEnv = normalizeMcpProviderRow(existing)?.env || {};
   if (body.command !== undefined) { sets.push(`command=$${idx++}`); params.push(String(body.command || "").trim()); }
   if (body.args !== undefined) { sets.push(`args=$${idx++}`); params.push(JSON.stringify(normalizeArgs(body.args))); }
-  if (body.env !== undefined) {
-    securedEnv = await storeMcpCredentials(existing.provider_name, mergeMaskedEnv(body.env, currentEnv));
-    sets.push(`env=$${idx++}`);
-    params.push(JSON.stringify(securedEnv.values));
-  }
+  if (body.env !== undefined) { sets.push(`env=$${idx++}`); params.push(JSON.stringify(normalizeEnv(body.env))); }
   if (body.transport !== undefined) { sets.push(`transport=$${idx++}`); params.push(body.transport || "stdio"); }
   if (body.is_active !== undefined) { sets.push(`is_active=$${idx++}`); params.push(boolFrom(body.is_active, true) ? 1 : 0); }
   if (body.default_enabled !== undefined || body.is_enabled !== undefined) {
@@ -319,25 +254,17 @@ export async function updateAppMcpProvider(ctx, input) {
     params.push(boolFrom(body.default_enabled ?? body.is_enabled, true) ? 1 : 0);
   }
   if (!sets.length) return { data: mcpRow(existing), message: "无变更" };
+  sets.push(`updated_by=$${idx++}`);
+  params.push(ctx.userId || null);
   sets.push(`updated_at=now()`);
   params.push(existing.id);
-  let row;
-  try {
-    row = await ctx.queryOne(
-      `UPDATE app_mcp_providers
-          SET ${sets.join(",")}
-        WHERE id=$${idx} AND deleted_at IS NULL
-        RETURNING ${APP_MCP_COLS}`,
-      params,
-    );
-  } catch (error) {
-    if (securedEnv) await deleteCredentialRefs(securedEnv.createdRefs);
-    throw error;
-  }
-  if (securedEnv) {
-    const retained = new Set(Object.values(securedEnv.values));
-    await deleteCredentialRefs(Object.values(currentEnv).filter((value) => !retained.has(value)));
-  }
+  const row = await ctx.queryOne(
+    `UPDATE app_mcp_providers
+        SET ${sets.join(",")}
+      WHERE id=$${idx} AND deleted_at IS NULL
+      RETURNING ${APP_MCP_COLS}`,
+    params,
+  );
   await disposeAllMcpRuntimes();
   return { data: mcpRow(row), message: "MCP Provider 更新成功" };
 }
@@ -366,11 +293,10 @@ export async function deleteAppMcpProvider(ctx, input) {
   const row = await getAppProviderRow(ctx, input.params.providerName);
   await ctx.query(
     `UPDATE app_mcp_providers
-        SET deleted_at=now(), updated_at=now()
+        SET deleted_at=now(), deleted_by=$2, updated_by=$2, updated_at=now()
       WHERE id=$1 AND deleted_at IS NULL`,
-    [row.id],
+    [row.id, ctx.userId || null],
   );
-  await deleteCredentialRefs(normalizeMcpProviderRow(row)?.env || {});
   await disposeAllMcpRuntimes();
   return { data: { deleted: true, provider_name: row.provider_name }, message: "MCP Provider 已删除" };
 }
@@ -415,15 +341,15 @@ export async function listProjectMcpProviders(ctx, input) {
     console.error("[project mcp providers list]", e?.message ?? e);
     return [];
   });
-  return { data: rows.map(mcpRow), message: "获取项目 MCP Provider 列表成功" };
+  return { data: rows, message: "获取项目 MCP Provider 列表成功" };
 }
 
-// 保留项目级 API 契约，但 Provider 定义统一在 App 设置中创建。
+// 兼容旧路由:项目内不再创建定义。
 export async function createMcpProvider() {
   throw new ApiError("项目内不创建 MCP Provider 定义,请在 App 设置 → MCP 服务器中创建后绑定到项目", 400);
 }
 
-// 项目级测试接口仍支持临时配置。
+// 兼容旧路由:/test 仍可测试临时配置。
 export async function testMcpProvider(ctx, input) {
   return testAppMcpProvider(ctx, input);
 }
@@ -437,19 +363,19 @@ export async function updateMcpProvider(ctx, input) {
     : input.body?.is_enabled;
   if (!(typeof raw === "boolean" || raw === null)) throw new ApiError("is_enabled/enabled_override 必须为布尔值或 null", 400);
   const provider = await getAppProviderRow(ctx, providerName || mid);
-  const data = await upsertProjectMcpBinding(ctx, pid, provider, raw);
-  return { data: mcpRow(data), message: "更新项目 MCP Provider 绑定成功" };
+  const data = await upsertProjectMcpBinding(ctx, pid, provider, raw, ctx.userId || "");
+  return { data, message: "更新项目 MCP Provider 绑定成功" };
 }
 
 // DELETE /api/projects/:pid/mcp_providers/:mid — 清除项目绑定覆盖。
 export async function deleteMcpProvider(ctx, input) {
   const { pid, mid, providerName } = input.params;
   const provider = await getAppProviderRow(ctx, providerName || mid);
-  const data = await clearProjectMcpBinding(ctx, pid, provider);
-  return { data: mcpRow(data), message: "已清除项目 MCP Provider 绑定" };
+  const data = await clearProjectMcpBinding(ctx, pid, provider, ctx.userId || "");
+  return { data, message: "已清除项目 MCP Provider 绑定" };
 }
 
-// POST /api/projects/:pid/mcp_providers/:mid/rediscover — 重新发现 App Provider。
+// POST /api/projects/:pid/mcp_providers/:mid/rediscover — 兼容旧路由,实际发现 App Provider。
 export async function rediscoverMcpProvider(ctx, input) {
   return rediscoverAppMcpProvider(ctx, {
     ...input,

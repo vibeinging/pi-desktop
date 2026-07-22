@@ -160,7 +160,7 @@ export async function traceToolCall({
 
   const startedAt = Date.now();
   const resolvedToolCallId =
-    String(toolCallId || "").trim() || `pi-desktop-tool:${safeToken(name || "tool")}:${Date.now()}:${++internalToolSeq}`;
+    String(toolCallId || "").trim() || `yiw-tool:${safeToken(name || "tool")}:${Date.now()}:${++internalToolSeq}`;
   let result;
   let error = null;
   recorder.recordToolStart({
@@ -199,11 +199,11 @@ export async function traceToolCall({
 }
 
 export function withAgentToolLifecycle(tool, attrs = {}) {
-  if (!tool || typeof tool.execute !== "function" || tool.__piTraceWrapped) return tool;
+  if (!tool || typeof tool.execute !== "function" || tool.__agenticTraceWrapped) return tool;
   const originalExecute = tool.execute.bind(tool);
   return {
     ...tool,
-    __piTraceWrapped: true,
+    __agenticTraceWrapped: true,
     async execute(toolCallId, params, signal, onUpdate) {
       return traceToolCall(
         {

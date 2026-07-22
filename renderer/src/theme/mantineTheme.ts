@@ -1,24 +1,23 @@
 import { createTheme, type MantineColorsTuple } from '@mantine/core'
 
-// pi-purple 主色调(默认主题)。具体配色仍由 theme/*/ SCSS 的 --el-* 变量驱动，
-// 这里给 Mantine 组件一个对齐的主色,避免组件默认蓝与整体紫不一致。
-const piPurple: MantineColorsTuple = [
-  '#f3f0ff',
-  '#e5dbff',
-  '#c9b8ff',
-  '#ac8fff',
-  '#9469fe',
-  '#8451fe',
-  '#7c45fe',
-  '#6a36e3',
-  '#5e2ecb',
-  '#5025b2'
+// YiW 默认主题。与 Element Plus 和工作台共用同一套深绿主色。
+const yiwWarm: MantineColorsTuple = [
+  '#edf3ef',
+  '#dce8e2',
+  '#bad3c8',
+  '#91b8a8',
+  '#669b87',
+  '#417c69',
+  '#2f6f60',
+  '#276354',
+  '#17483e',
+  '#123b33'
 ]
 
 export const mantineTheme = createTheme({
-  primaryColor: 'pi',
+  primaryColor: 'yiw',
   colors: {
-    pi: piPurple
+    yiw: yiwWarm
   },
   fontFamily:
     '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif',

@@ -1,15 +1,9 @@
 {
-  "name": "@pi-desktop/server",
+  "name": "@yiw/server",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
-  "description": "PI Desktop 的通用本地后端与传输层。",
-  "author": "PI Desktop contributors",
-  "license": "MIT",
-  "engines": {
-    "node": ">=22.19.0",
-    "npm": ">=11.0.0"
-  },
+  "description": "桌面版本地后端:服务 app/renderer 的本地 API 与 Agent/数据引擎。",
   "workspaces": [
     "vendor/pi/tui",
     "vendor/pi/ai",
@@ -17,24 +11,27 @@
     "vendor/pi/coding-agent"
   ],
   "scripts": {
-    "prestart": "npm run ensure:pi",
     "start": "node src/index.js",
-    "predev": "npm run ensure:pi",
-    "dev": "node src/index.js",
-    "pretest": "npm run ensure:pi",
-    "test": "node --test test/*.test.mjs",
     "ensure:pi": "node scripts/ensure_pi_build.mjs",
-    "build:pi": "node scripts/build_pi.mjs"
+    "build:pi": "node scripts/build_pi.mjs",
+    "check:capabilities": "node scripts/check_capability_coverage.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "file:vendor/pi/agent",
-    "@earendil-works/pi-ai": "file:vendor/pi/ai",
-    "@earendil-works/pi-coding-agent": "file:vendor/pi/coding-agent",
+    "@clickhouse/client": "^1.22.0",
+    "@duckdb/node-api": "^1.5.4-r.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@yitrace/db": "0.1.3",
+    "@yitrace/db": "0.1.6",
     "better-sqlite3": "^12.11.1",
+    "cors": "^2.8.5",
     "express": "^4.21.2",
-    "undici": "^7.0.0"
+    "jsonwebtoken": "^9.0.2",
+    "mammoth": "^1.12.0",
+    "mssql": "^12.5.5",
+    "mysql2": "^3.22.5",
+    "oracledb": "^7.0.0",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.13.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260120.1"

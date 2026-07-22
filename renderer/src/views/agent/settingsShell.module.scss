@@ -1,6 +1,6 @@
-/* 设置页通用布局壳 —— App 设置(AgentSettings)与项目设置(ProjectSettings 桌面整窗)共用。
+/* 设置页通用布局壳 —— App 设置(YiWSettings)与项目设置(ProjectSettings 桌面整窗)共用。
    整窗两栏:左导航(透明,露出全局底)+ 右主面板(浮起圆角卡)。
-   颜色全走 .agent-root 的 --agent-* token,亮/暗自动切换。
+   颜色全走 .yiw-root 的 --yiw-* token,亮/暗自动切换。
    这是「布局唯一真相源」——两个设置页的返回键位置/侧栏宽度/内容卡完全一致,靠复用而非各自 CSS 模仿。 */
 
 .wrap {
@@ -11,9 +11,9 @@
   gap: 5px;
   padding: 10px;
   box-sizing: border-box;
-  background: var(--agent-bg);
-  color: var(--agent-text);
-  font-family: var(--agent-sans);
+  background: var(--yiw-bg);
+  color: var(--yiw-text);
+  font-family: var(--yiw-sans);
 }
 
 /* ── 左栏(透明,与对话壳左栏一致) ── */
@@ -31,8 +31,8 @@
   padding: 6px 8px;
   border: none;
   background: transparent;
-  border-radius: var(--agent-r-sm);
-  color: var(--agent-muted);
+  border-radius: var(--yiw-r-sm);
+  color: var(--yiw-muted);
   font-size: 13px;
   cursor: pointer;
   transition:
@@ -40,8 +40,8 @@
     background 0.12s ease;
 }
 .back:hover {
-  color: var(--agent-text);
-  background: var(--agent-nav-hover);
+  color: var(--yiw-text);
+  background: var(--yiw-nav-hover);
 }
 .back svg {
   flex: none;
@@ -65,8 +65,8 @@
   padding: 9px 11px;
   border: none;
   background: transparent;
-  border-radius: var(--agent-r-el);
-  color: var(--agent-text-soft);
+  border-radius: var(--yiw-r-el);
+  color: var(--yiw-text-soft);
   font-size: 13.5px;
   font-weight: 500;
   text-align: left;
@@ -76,29 +76,29 @@
     color 0.12s ease;
 }
 .navItem:hover {
-  background: var(--agent-nav-hover);
-  color: var(--agent-text);
+  background: var(--yiw-nav-hover);
+  color: var(--yiw-text);
 }
 .navIcon {
   flex: none;
-  color: var(--agent-faint);
+  color: var(--yiw-faint);
 }
 .navItemActive,
 .navItemActive:hover {
-  background: var(--agent-nav-active);
-  color: var(--agent-accent);
+  background: var(--yiw-nav-active);
+  color: var(--yiw-accent);
   font-weight: 600;
-  box-shadow: var(--agent-active-shadow);
+  box-shadow: var(--yiw-active-shadow);
 }
 .navItemActive .navIcon {
-  color: var(--agent-accent);
+  color: var(--yiw-accent);
 }
 
 .navSep {
   flex: 0 0 auto;
   height: 1px;
   margin: 10px 8px;
-  background: var(--agent-border-soft);
+  background: var(--yiw-border-soft);
 }
 
 /* ── 可折叠分组标题 ── */
@@ -114,19 +114,19 @@
   cursor: pointer;
 }
 .groupHeader:hover .groupLabel {
-  color: var(--agent-muted);
+  color: var(--yiw-muted);
 }
 .groupLabel {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--agent-faint);
+  color: var(--yiw-faint);
   transition: color 0.12s ease;
 }
 .groupChev {
   flex: none;
-  color: var(--agent-faint);
+  color: var(--yiw-faint);
   transition: transform 0.15s ease;
 }
 .groupChevCollapsed {
@@ -138,9 +138,9 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  background: var(--agent-surface);
-  border-radius: var(--agent-r-card);
-  box-shadow: var(--agent-card-shadow);
+  background: var(--yiw-surface);
+  border-radius: var(--yiw-r-card);
+  box-shadow: var(--yiw-card-shadow);
 }
 
 .mainFixed {

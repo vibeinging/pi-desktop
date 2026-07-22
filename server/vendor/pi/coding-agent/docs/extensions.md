@@ -812,7 +812,9 @@ In parallel tool mode, `tool_result` and `tool_execution_end` may interleave in 
 `tool_result` handlers chain like middleware:
 - Handlers run in extension load order
 - Each handler sees the latest result after previous handler changes
-- Handlers can return partial patches (`content`, `details`, or `isError`); omitted fields keep their current values
+- Handlers can inspect `content`, `details`, `isError`, `handoff`, and `terminate`
+- Handlers can return partial patches (`content`, `details`, `isError`, `handoff`, or `terminate`); omitted fields keep their current values
+- Returning `handoff: null` explicitly rejects direct delivery and lets the parent model continue; omitting `handoff` preserves it
 
 Use `ctx.signal` for nested async work inside the handler. This lets Esc cancel model calls, `fetch()`, and other abort-aware operations started by the extension.
 
@@ -822,6 +824,11 @@ import { isBashToolResult } from "@earendil-works/pi-coding-agent";
 pi.on("tool_result", async (event, ctx) => {
   // event.toolName, event.toolCallId, event.input
   // event.content, event.details, event.isError
+  // event.handoff, event.terminate
+
+  if (event.handoff && shouldKeepParentInControl(event.handoff)) {
+    return { handoff: null };
+  }
 
   if (isBashToolResult(event)) {
     // event.details is typed as BashToolDetails

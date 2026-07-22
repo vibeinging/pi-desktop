@@ -1,41 +1,33 @@
 # 依赖(各级 node_modules)
 **/node_modules/
-.cache/
 
 # 前端构建产物
 renderer/dist/
+renderer/.vite/
 
 # Electron 打包产物
 release/
-staging/
 
 # 本地数据库 / 日志 / 临时
 *.log
 *.db
 *.db-wal
 *.db-shm
-*.sqlite
-*.sqlite3
-.env
-.env.local
-.env.*.local
+!eval/datasets/functional/input/task_多轮对话/context/db/trade_dist.sqlite
 .DS_Store
-
-# 测试覆盖率
-**/coverage/
 
 # app/eval 运行输出
 eval/results/
 
-# 本地审计工具输出
-.gstack/
-
-# 本地辅助工具生成的会话计划（仓库内已跟踪的历史文件不受影响）
-.zcode/plans/plan-sess_*.md
-
 # vendored pi 的编译产物(build:pi 可再生,不入库)
 server/vendor/pi/**/dist/
 
-# 上游 DOOM overlay 含 doomgeneric GPL 构建物，桌面底座不分发
-server/vendor/pi/coding-agent/docs/images/doom-extension.png
-server/vendor/pi/coding-agent/examples/extensions/doom-overlay/
+# 本地环境和凭据
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# 可选的本地向量扩展二进制（公开仓库不分发）
+server/vendor/vexdb_lite/**/*.dylib
+server/vendor/vexdb_lite/**/*.dll

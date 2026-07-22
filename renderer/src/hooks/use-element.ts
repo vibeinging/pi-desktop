@@ -3,7 +3,7 @@ import { notifications } from '@mantine/notifications'
 import { modals } from '@mantine/modals'
 import { t } from '@/lang'
 
-// 通知类型到 Mantine 颜色的映射。
+// element-plus 的 type → mantine notifications 的 color 映射
 const typeColorMap: Record<string, string> = {
   success: 'green',
   error: 'red',
@@ -72,7 +72,7 @@ export const useElement = () => {
     }
   }
 
-  // 共享表格、表单和弹窗状态。
+  // reactive(state) → useState；下游按字段读取(不再有 .value)
   const [state] = useState<any>({
     /* table*/
     tableData: [],
@@ -151,7 +151,8 @@ export const elMessage = (message?: any, type?: any) => {
  * loading加载框
  * 调用后通过 loadingId.close() 进行关闭
  * */
-// 命令式全屏 loading，供非组件调用场景使用。
+// TODO(migration): el-loading 是 element-plus 的全局命令式 loading(ElLoading.service)。
+// Mantine 的 LoadingOverlay/Loader 是组件级,无全局服务。这里用一个全屏遮罩 DOM 兜底,保持原 API。
 let loadingEl: HTMLElement | null = null
 export const elLoading = (msg?: any) => {
   if (loadingEl) return
@@ -221,7 +222,7 @@ export const elConfirm = (title?: any, message?: any) => {
 }
 
 /* 级联*/
-// 用模块级 key 强制刷新级联选择器。
+// cascaderKey 原是 vue ref,用于强制刷新级联选择器。React 端用模块级变量兜底。
 let cascaderKey: any
 export const casHandleChange = () => {
   // 解决目前级联选择器搜索输入报错问题

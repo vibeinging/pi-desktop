@@ -1,45 +1,14 @@
-import {
-  appendAgentTranscript,
-  appendSessionMessage,
-  completeAgentRunAndSync,
-  deleteSessionData,
-  getAgentTranscriptState,
-  loadAgentTranscript,
-  markAgentTranscriptSynchronized,
-  query,
-  queryOne,
-  replaceAgentTranscript,
-  replaceAgentTranscriptProjection,
-} from './db.js';
+// 请求上下文:用例层(L1)与外界的唯一边界。替代 req.userId + 闭包捕获的 query/queryOne。
+// usecase 只依赖 ctx,不碰 req/res/express → 可纯函数单测:fn(makeCtx({userId,query:fake}), input)。
+import { query, queryOne, transaction } from './db.js';
 
-// 通用请求上下文。业务项目可通过 extras 继续扩展。
-export function makeCtx({ signal = null, extras = {} } = {}) {
+export function makeCtx({ userId = null, signal = null } = {}) {
   return {
-    signal,
+    userId, // 来自 transport 鉴权(替代 req.userId)
     query,
-    queryOne,
-    appendSessionMessage,
-    appendAgentTranscript,
-    replaceAgentTranscript,
-    replaceAgentTranscriptProjection,
-    loadAgentTranscript,
-    getAgentTranscriptState,
-    markAgentTranscriptSynchronized,
-    completeAgentRunAndSync,
-    deleteSessionData,
-    db: {
-      query,
-      queryOne,
-      appendSessionMessage,
-      appendAgentTranscript,
-      replaceAgentTranscript,
-      replaceAgentTranscriptProjection,
-      loadAgentTranscript,
-      getAgentTranscriptState,
-      markAgentTranscriptSynchronized,
-      completeAgentRunAndSync,
-      deleteSessionData,
-    },
-    ...extras,
+    queryOne, // L2 句柄;测试可替身
+    transaction, // 同步事务入口;事务回调内不能 await
+    signal, // AbortSignal:流式/长任务用(替代 res.on('close')),批 5 接入
+    // 重型 service(MetricService 等)后续按需加 lazy getter
   };
 }

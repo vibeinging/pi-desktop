@@ -1,11 +1,13 @@
-// IPC 传输适配层：进程消息 → 匹配 registry → makeCtx → 调用 use case → 响应回传。
+// L0 传输适配层(ipc 侧):进程消息 → 匹配 registry → 鉴权 → makeCtx → 调 usecase → 信封回传。
+// strangler:命中 registry 走新纯函数路径(不经 express);未命中返回 false,调用方回退旧 Express shim。
 // 消息契约与 ipc_dispatch.js 一致:in {id,method,url,headers,body};out {id,type:'head'|'data'|'end'}。
 import { makeRouter } from './router.js';
+import { verifyToken } from './auth.js';
 import { okBody, failBody } from './envelope.js';
 import { makeCtx } from '../ctx.js';
 import { ApiError } from '../errors.js';
 import { ROUTES } from './registry.js';
-import { createStreamEvent, StreamEventType } from './agent_stream_protocol.js';
+import { createStreamEvent, StreamEventType } from '../engine/stream/agent_stream_protocol.js';
 
 const match = makeRouter(ROUTES);
 const activeStreams = new Map(); // id → AbortController(流式 abort)
@@ -24,7 +26,7 @@ export function handleIpcMessage(msg, send) {
   const search = qIdx >= 0 ? rawUrl.slice(qIdx + 1) : '';
   const hit = match(method, path);
   if (!hit) {
-    // 未注册的请求直接返回 404，并记录日志帮助发现漏注册的路径。
+    // 全部路由已迁入 registry;未命中 = 真·未找到(不再回退 Express)。打日志便于发现漏迁。
     console.warn(`[未命中 registry] ${method} ${path}`);
     const id = msg.id;
     send({ id, type: 'head', status: 404, statusText: '', headers: { 'content-type': 'application/json; charset=utf-8' } });
@@ -44,6 +46,11 @@ async function runUsecase(hit, search, msg, send) {
     send({ id, type: 'end' });
   };
   try {
+    let userId = null;
+    if (route.auth !== false) {
+      userId = verifyToken(msg.headers || {});
+      if (!userId) return reply(401, failBody('未登录或令牌缺失', 401));
+    }
     let body = msg.body;
     if (typeof body === 'string' && body) {
       try { body = JSON.parse(body); } catch { /* 非 JSON 保留原串 */ }
@@ -58,7 +65,7 @@ async function runUsecase(hit, search, msg, send) {
     if (route.stream) {
       const controller = new AbortController();
       activeStreams.set(id, controller);
-      const sctx = makeCtx({ signal: controller.signal });
+      const sctx = makeCtx({ userId, signal: controller.signal });
       const emit = (event) => { try { send({ id, type: 'data', chunk: `data: ${JSON.stringify(event)}\n\n` }); } catch { /* renderer gone */ } };
       send({ id, type: 'head', status: 200, statusText: '', headers: { 'content-type': 'text/event-stream; charset=utf-8' } });
       try {
@@ -86,7 +93,7 @@ async function runUsecase(hit, search, msg, send) {
       }
       return;
     }
-    const ctx = makeCtx({});
+    const ctx = makeCtx({ userId });
     const result = await route.fn(ctx, input);
     // 二进制下载:用例返回 { data:Buffer, _binary:true, headers } → 走 base64(main 端还原 Blob)
     if (result && result._binary) {

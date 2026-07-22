@@ -2,9 +2,13 @@
 @use './scss-suger.scss';
 //重置 element-plus 样式
 @use 'reset-elemenet-plus-style.scss';
+//公共组件样式
+@use 'components.scss';
 //动画文件
 @use 'transition.scss';
 //响应式适配工具类
+//侧栏 + 主区（非 ad-*）移动端统一补强
+@use 'sidebar-shell-mobile.scss';
 
 //reset style
 body {

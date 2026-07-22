@@ -814,6 +814,42 @@ describe("ExtensionRunner", () => {
 				isError: true,
 			});
 		});
+
+		it("passes handoff state to handlers and preserves an explicit clear patch", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("tool_result", async (event) => {
+						if (event.handoff?.content !== "delegated answer") {
+							throw new Error("missing original handoff");
+						}
+						return { handoff: null, terminate: false };
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "tool-result-handoff.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const patched = await runner.emitToolResult({
+				type: "tool_result",
+				toolName: "service_tool",
+				toolCallId: "call-handoff",
+				input: {},
+				content: [{ type: "text", text: "full result" }],
+				details: { status: "completed" },
+				isError: false,
+				handoff: { kind: "final", content: "delegated answer" },
+				terminate: true,
+			});
+
+			expect(patched).toEqual({
+				content: [{ type: "text", text: "full result" }],
+				details: { status: "completed" },
+				isError: false,
+				handoff: null,
+				terminate: false,
+			});
+		});
 	});
 
 	describe("provider registration", () => {

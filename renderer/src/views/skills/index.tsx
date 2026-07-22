@@ -13,11 +13,11 @@ import {
 } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { modals } from '@mantine/modals'
+import marked, { sanitizeMarkdownHtml } from '@/utils/markdownConfig'
 import ElSvgIcon from '@/components/ElSvgIcon'
-import { renderSafeMarkdown } from '@/utils/markdownConfig'
 import { useProjectStore } from '@/store/project'
 import SkillEditor, { type SkillEditorHandle } from './components/SkillEditor'
-import SemanticEmptyState from '@/components/EmptyState'
+import SemanticEmptyState from '../business/components/SemanticEmptyState'
 import {
   aiGenerateAppSkillReq,
   aiGenerateSkillReq,
@@ -72,7 +72,12 @@ const isEnabled = (skill: SkillItem | null | undefined) => {
 const isSystemSkill = (skill: SkillItem | null | undefined) => !!skill?.builtin
 
 const sanitizeMarkdown = (source?: string) => {
-  return source ? renderSafeMarkdown(source) : ''
+  if (!source) return ''
+  try {
+    return marked.parse(source) as string
+  } catch {
+    return sanitizeMarkdownHtml(source)
+  }
 }
 
 export default function Skills({ scope = 'project' }: SkillsProps = {}) {
@@ -83,7 +88,7 @@ export default function Skills({ scope = 'project' }: SkillsProps = {}) {
   const pageTitle = isAppScope ? 'App 技能库' : '项目技能'
   const pageDesc = isAppScope
     ? '维护全局技能定义、默认启用状态和可调用工具。'
-    : '为当前项目选择可用技能，并管理项目级启用覆盖。'
+    : '为当前问数项目选择可用技能，并管理项目级启用覆盖。'
 
   const request = useMemo(
     () => ({

@@ -5,7 +5,7 @@ import { notifications } from '@mantine/notifications'
 import axiosReq from '@/utils/axios-req'
 import { t } from '@/lang'
 
-// 表格操作通知。
+// 通知弹框(对齐原 use-element 的 elMessage：ElMessage → @mantine/notifications)
 const elMessage = (message: string, type?: 'success' | 'warning' | 'error' | 'info') => {
   const colorMap: Record<string, string> = { success: 'green', warning: 'yellow', error: 'red', info: 'blue' }
   notifications.show({
@@ -15,7 +15,7 @@ const elMessage = (message: string, type?: 'success' | 'warning' | 'error' | 'in
   })
 }
 
-// 表格操作确认框。
+// 确认弹框(对齐原 use-element 的 elConfirm：ElMessageBox.confirm → @mantine/modals)
 const elConfirm = (title: string, message: string): Promise<void> => {
   return new Promise<void>((resolve) => {
     modals.openConfirmModal({
@@ -63,6 +63,8 @@ export const useTable = (searchForm: any, selectPageReq: () => void) => {
   /**
    * 日期范围选择处理
    * @param timeArr choose the time
+   * @author 熊猫哥
+   * @date 2022/9/25 14:02
    */
   const dateRangePacking = useCallback(
     (timeArr: any) => {
@@ -120,7 +122,7 @@ export const useTable = (searchForm: any, selectPageReq: () => void) => {
       const stringLength = deleteNameTitle.length - 1
       elConfirm('删除', `您确定要删除【${deleteNameTitle.slice(0, stringLength)}】吗`).then(() => {
         const data = rowDeleteIdArr
-        // bfLoading 是请求层的 loading 标记，用 any 透传避免 ReqConfig 超额属性报错。
+        // bfLoading 为原工程 axiosReq 的自定义 loading 标记,用 any 透传避免 ReqConfig 超额属性报错
         axiosReq({
           data,
           method: 'DELETE',

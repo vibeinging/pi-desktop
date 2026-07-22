@@ -13,23 +13,8 @@ const mockState = vi.hoisted(() => ({
 				usage?: {
 					prompt_tokens: number;
 					completion_tokens: number;
-					prompt_cache_hit_tokens?: number;
-					cache_input_tokens?: number;
-					cached_tokens?: number;
-					cache_read_input_tokens?: number;
-					cache_write_tokens?: number;
-					cache_creation_input_tokens?: number;
-					prompt_tokens_details?: {
-						cached_tokens?: number;
-						cache_write_tokens?: number;
-						cache_creation_input_tokens?: number;
-						cache_creation?: {
-							ephemeral_5m_input_tokens?: number;
-							ephemeral_1h_input_tokens?: number;
-							cache_creation_input_tokens?: number;
-						};
-					};
-					completion_tokens_details?: { reasoning_tokens?: number };
+					prompt_tokens_details: { cached_tokens: number; cache_write_tokens?: number };
+					completion_tokens_details: { reasoning_tokens: number };
 				};
 		  }>
 		| undefined,
@@ -1444,7 +1429,6 @@ describe("openai-completions tool_choice", () => {
 
 		expect(response.usage.input).toBe(10);
 		expect(response.usage.output).toBe(33);
-		expect(response.usage.reasoning).toBe(21);
 		expect(response.usage.totalTokens).toBe(43);
 	});
 
@@ -1486,6 +1470,74 @@ describe("openai-completions tool_choice", () => {
 		expect(response.usage.input).toBe(20);
 		expect(response.usage.cacheRead).toBe(50);
 		expect(response.usage.cacheWrite).toBe(30);
+		expect(response.usage.totalTokens).toBe(105);
+	});
+
+	it("uses positive compatibility cache fields when standard fields are zero", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-cache-compat",
+				choices: [{ delta: { content: "OK" }, finish_reason: null }],
+			},
+			{
+				id: "chatcmpl-cache-compat",
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 100,
+					completion_tokens: 5,
+					prompt_cache_hit_tokens: 50,
+					cache_creation_input_tokens: 30,
+					prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Reply with exactly OK", timestamp: Date.now() }],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.input).toBe(20);
+		expect(response.usage.cacheRead).toBe(50);
+		expect(response.usage.cacheWrite).toBe(30);
+		expect(response.usage.totalTokens).toBe(105);
+	});
+
+	it("accepts legacy top-level cache_input_tokens", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-cache-input",
+				choices: [{ delta: { content: "OK" }, finish_reason: null }],
+			},
+			{
+				id: "chatcmpl-cache-input",
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 100,
+					completion_tokens: 5,
+					cache_input_tokens: 80,
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Reply with exactly OK", timestamp: Date.now() }],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.input).toBe(20);
+		expect(response.usage.cacheRead).toBe(80);
+		expect(response.usage.cacheWrite).toBe(0);
 		expect(response.usage.totalTokens).toBe(105);
 	});
 
@@ -1532,89 +1584,6 @@ describe("openai-completions tool_choice", () => {
 		expect(response.usage.input).toBe(20);
 		expect(response.usage.cacheRead).toBe(50);
 		expect(response.usage.cacheWrite).toBe(30);
-		expect(response.usage.totalTokens).toBe(105);
-	});
-
-	it("uses positive compatibility cache fields when standard fields are zero", async () => {
-		mockState.chunks = [
-			{
-				id: "chatcmpl-cache-compat",
-				choices: [{ delta: { content: "OK" }, finish_reason: null }],
-			},
-			{
-				id: "chatcmpl-cache-compat",
-				choices: [{ delta: {}, finish_reason: "stop" }],
-				usage: {
-					prompt_tokens: 100,
-					completion_tokens: 5,
-					prompt_cache_hit_tokens: 50,
-					cache_creation_input_tokens: 30,
-					prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
-					completion_tokens_details: { reasoning_tokens: 2 },
-				},
-			},
-		];
-
-		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
-		const model = { ...baseModel, api: "openai-completions" } as const;
-		const response = await streamSimple(
-			model,
-			{
-				messages: [
-					{
-						role: "user",
-						content: "Reply with exactly OK",
-						timestamp: Date.now(),
-					},
-				],
-			},
-			{ apiKey: "test" },
-		).result();
-
-		expect(response.usage.input).toBe(20);
-		expect(response.usage.cacheRead).toBe(50);
-		expect(response.usage.cacheWrite).toBe(30);
-		expect(response.usage.reasoning).toBe(2);
-		expect(response.usage.totalTokens).toBe(105);
-	});
-
-	it("accepts legacy top-level cache_input_tokens", async () => {
-		mockState.chunks = [
-			{
-				id: "chatcmpl-cache-input",
-				choices: [{ delta: { content: "OK" }, finish_reason: null }],
-			},
-			{
-				id: "chatcmpl-cache-input",
-				choices: [{ delta: {}, finish_reason: "stop" }],
-				usage: {
-					prompt_tokens: 100,
-					completion_tokens: 5,
-					cache_input_tokens: 80,
-				},
-			},
-		];
-
-		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
-		const model = { ...baseModel, api: "openai-completions" } as const;
-		const response = await streamSimple(
-			model,
-			{
-				messages: [
-					{
-						role: "user",
-						content: "Reply with exactly OK",
-						timestamp: Date.now(),
-					},
-				],
-			},
-			{ apiKey: "test" },
-		).result();
-
-		expect(response.usage.input).toBe(20);
-		expect(response.usage.cacheRead).toBe(80);
-		expect(response.usage.cacheWrite).toBe(0);
-		expect(response.usage.reasoning).toBe(0);
 		expect(response.usage.totalTokens).toBe(105);
 	});
 

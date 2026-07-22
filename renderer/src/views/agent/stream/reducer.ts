@@ -8,6 +8,7 @@ import type {
   WorkstationDraft,
   WorkstationPatch
 } from './types'
+import { extractWorkspaceEvent } from './streamAdapter'
 import { artifactKindForPath } from './uiCapabilities'
 
 function parseJson(text: unknown): any {
@@ -73,6 +74,7 @@ function toolPatch(payload: any, status: ToolCall['status']): NonNullable<AgentS
 }
 
 const TOOL_LABELS: Record<string, string> = {
+  execute_sql: '查询数据库',
   read: '读取文件',
   bash: '执行命令',
   write: '写入文件',
@@ -80,10 +82,21 @@ const TOOL_LABELS: Record<string, string> = {
   ls: '列出文件',
   find: '查找文件',
   grep: '搜索文件',
-  update_plan: '更新计划'
+  metric_view_query: '召回指标视图',
+  sql_scan_operator: '查询数据库',
+  grep_tables: '检索表',
+  grep_columns: '检索字段',
+  align_metric: '对齐指标',
+  align_value: '对齐实体值',
+  semantic_scan_operator: '检索文档',
+  semantic_filter_operator: '语义过滤',
+  semantic_extract_operator: '语义抽取',
+  semantic_join_operator: '语义关联',
+  web_search_operator: '联网搜索',
+  format_result: '生成结果展示'
 }
 
-const AUTO_EXPAND_TOOL_RESULTS = new Set(['ls', 'find', 'grep'])
+const AUTO_EXPAND_TOOL_RESULTS = new Set(['read', 'ls', 'find', 'grep'])
 
 function clippedPreview(value: unknown, max = 180) {
   const text = toText(value).replace(/\s+/g, ' ').trim()
@@ -280,6 +293,11 @@ export function reduceAgentStreamEvent(event: AgentStreamEventV1): AgentStreamPa
   if (event.type === 'skill.selected') {
     const skill = skillPatch(payload)
     return skill ? { workstation: { skill } } : { ignored: true }
+  }
+
+  if (event.type === 'workspace.updated') {
+    const workspaceEvent = extractWorkspaceEvent(event)
+    return workspaceEvent ? { workspaceEvent } : { ignored: true }
   }
 
   if (event.type === 'artifact.created') {

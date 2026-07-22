@@ -10,13 +10,12 @@ import {
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import mermaid from 'mermaid'
-import marked, { extractToc, renderSafeMarkdown } from '@/utils/markdownConfig'
-import { sanitizeMermaidSvg } from '@/utils/safeHtml'
+import marked, { extractToc, sanitizeMarkdownHtml } from '@/utils/markdownConfig'
 import styles from './MarkdownRenderer.module.scss'
 // 全局样式（teleport→body 的放大模态框，因 portal 到 body，类名保持非 module）
 import './MarkdownRenderer.scss'
 
-// 在共享 marked 实例中为标题添加 id。
+// 为标题添加 id（注册到共享 marked 实例，对齐原组件 module 级 marked.use）
 const renderer = {
   heading(text: any, level: any) {
     const id = text
@@ -54,7 +53,6 @@ const initMermaid = (theme: string) => {
       cycleTextColor: isDark ? '#ffffff' : '#0f172a',
     } as any,
     securityLevel: 'strict',
-    flowchart: { htmlLabels: false },
   })
 }
 
@@ -66,7 +64,7 @@ export interface MarkdownRendererProps {
 }
 
 export interface MarkdownRendererHandle {
-  /** 暴露滚动到指定标题的方法。 */
+  /** 暴露滚动到指定标题的方法（对齐原 defineExpose） */
   scrollToHeading: (id: string) => void
 }
 
@@ -146,7 +144,12 @@ function MarkdownRenderer(
   // 渲染 Markdown → HTML（computed → useMemo）
   const renderedContent = useMemo(() => {
     if (!content) return ''
-    return renderSafeMarkdown(content)
+    try {
+      return marked.parse(content) as string
+    } catch (error) {
+      console.error('Markdown render error:', error)
+      return content.replace(/\n/g, '<br>')
+    }
   }, [content])
 
   // 提取目录并通知父组件（原在 computed 内 emit，React 中移到副作用避免渲染期触发回调）
@@ -231,14 +234,16 @@ function MarkdownRenderer(
       if (!pre) continue
 
       try {
-        const id = `mermaid-${Math.random().toString(36).substr(2, 9)}`
+        const id = `mermaid-${globalThis.crypto.randomUUID()}`
         const { svg } = await mermaid.render(id, code)
-        const safeSvg = sanitizeMermaidSvg(svg)
-        if (!safeSvg.trim()) throw new Error('Mermaid 输出未通过安全检查')
+        const safeSvg = sanitizeMarkdownHtml(svg)
 
         const container = document.createElement('div')
         container.className = 'mermaid-diagram'
-        container.innerHTML = safeSvg
+        const svgDocument = new DOMParser().parseFromString(safeSvg, 'image/svg+xml')
+        const svgElement = svgDocument.documentElement
+        if (svgElement.nodeName.toLowerCase() !== 'svg') throw new Error('Mermaid 未返回有效 SVG')
+        container.appendChild(document.importNode(svgElement, true))
 
         // 添加放大镜按钮
         const zoomButton = document.createElement('button')

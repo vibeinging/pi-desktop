@@ -102,15 +102,46 @@ prompt("Read config.json")
 Tool execution mode is configurable:
 
 - `parallel` (default): preflight tool calls sequentially, execute allowed tools concurrently, emit `tool_execution_end` as soon as each tool is finalized, then emit toolResult messages and `turn_end.toolResults` in assistant source order
-- `sequential`: execute tool calls one by one, matching the historical behavior
+- `sequential`: execute tool calls one by one; after the complete batch is finalized, emit toolResult messages in assistant source order
 
-In parallel mode, tool completion events follow tool completion order, but persisted toolResult messages still follow assistant source order.
+Tool completion events follow execution completion order, but persisted toolResult messages always follow assistant source order. Delaying transcript emission until the batch is finalized lets the runtime apply an accepted service handoff atomically.
 
 The mode can be set globally via `toolExecution` in the agent config, or per-tool via `executionMode` on `AgentTool`. If any tool call in a batch targets a tool with `executionMode: "sequential"`, the entire batch executes sequentially regardless of the global setting.
 
-The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.
+The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted. It may return `handoff: null` to reject a tool-provided handoff while keeping the tool successful; omitting `handoff` preserves the original value.
 
 Tools can also return `terminate: true` to hint that the automatic follow-up LLM call should be skipped. The loop only stops early when every finalized tool result in that batch sets `terminate: true`. Mixed batches continue normally.
+
+### Final handoff from a service tool
+
+A service or sub-agent tool can return a complete answer without asking the parent model to rewrite it:
+
+```typescript
+return {
+  content: [{ type: "text", text: "Full result used when the parent must continue" }],
+  handoff: {
+    kind: "final",
+    content: "Final answer shown to the user",
+    source: { type: "service", name: "query_agent", model: "query-model" },
+    toolResult: {
+      content: [{ type: "text", text: "Completed by query_agent" }],
+      details: { status: "completed", artifacts: [] },
+    },
+  },
+};
+```
+
+The runtime accepts the handoff only when `kind` is exactly `"final"`, `content` is a non-empty string, the run is not aborted, every tool call in the batch finished, and every result succeeded with a valid final handoff. A mixed, incomplete, invalid, failed, or cancelled batch keeps the ordinary tool results and lets the parent model continue.
+
+When accepted, `toolResult` is an optional compact receipt persisted instead of the full answer. The full answer is stored once in a synthetic assistant message with durable source and tool-call metadata. On a later model turn the message is marked as untrusted delegated output before it is sent to the LLM. Event order is:
+
+```text
+tool_execution_end
+message_start/end  { compact toolResultMessage }
+message_start/end  { final assistantMessage }
+tool_handoff       { final assistantMessage }
+turn_end           { message: final assistantMessage }
+```
 
 Low-level loop callers can set `shouldStopAfterTurn` to stop gracefully after the current turn completes:
 
@@ -153,6 +184,7 @@ The last message in context must be `user` or `toolResult` (not `assistant`).
 | `tool_execution_start` | Tool begins |
 | `tool_execution_update` | Tool streams progress |
 | `tool_execution_end` | Tool completes |
+| `tool_handoff` | A complete service/sub-agent answer is promoted to the final assistant message |
 
 `Agent.subscribe()` listeners are awaited in registration order. `agent_end` means no more loop events will be emitted, but `await agent.waitForIdle()` and `await agent.prompt(...)` only settle after awaited `agent_end` listeners finish.
 
@@ -202,6 +234,9 @@ const agent = new Agent({
 
   // Postprocess each tool result before final tool events are emitted.
   afterToolCall: async ({ toolCall, result, isError, context }) => {
+    if (result.handoff && !policyAllows(result.handoff)) {
+      return { handoff: null };
+    }
     if (toolCall.name === "notify_done" && !isError) {
       return { terminate: true };
     }

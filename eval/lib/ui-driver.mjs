@@ -122,9 +122,9 @@ export function makeUiDriver(session) {
         return exact ? t === needle : t.includes(needle);
       });
       if (!hit) return null;
-      const token = 'pi-eval-' + Math.random().toString(36).slice(2);
-      hit.setAttribute('data-pi-eval-target', token);
-      return '[data-pi-eval-target="' + token + '"]';
+      const token = 'yiw-eval-' + Math.random().toString(36).slice(2);
+      hit.setAttribute('data-yiw-eval-target', token);
+      return '[data-yiw-eval-target="' + token + '"]';
     `);
 
   const waitFor = async (selector, { timeout = 5000, visible = true } = {}) => {
@@ -319,12 +319,6 @@ export function makeUiDriver(session) {
 
     return ev(`
       const path = ${JSON.stringify(path)};
-      if (location.protocol === 'file:') {
-        history.pushState({}, '', path);
-        window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-        return location.pathname + location.search + location.hash;
-      }
       const { router } = await import('/src/router');
       await router.navigate(path);
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));

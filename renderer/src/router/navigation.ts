@@ -6,7 +6,7 @@ export type NavigateFn = (to: string, opts?: { replace?: boolean }) => void
 
 let _navigate: NavigateFn = () => {
   // 路由未就绪时回退到原生跳转
-  if (typeof window !== 'undefined') window.location.assign('/')
+  if (typeof window !== 'undefined') window.location.assign('/agent')
 }
 
 export const setNavigate = (fn: NavigateFn) => {

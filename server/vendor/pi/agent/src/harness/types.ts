@@ -1,5 +1,5 @@
 import type { ImageContent, Model, Models, SimpleStreamOptions, TextContent, Transport } from "@earendil-works/pi-ai";
-import type { AgentEvent, AgentMessage, AgentTool, QueueMode, ThinkingLevel } from "../index.ts";
+import type { AgentEvent, AgentMessage, AgentTool, AgentToolHandoff, QueueMode, ThinkingLevel } from "../index.ts";
 import type { Session } from "./session/session.ts";
 
 /** Result of a fallible operation. Expected failures are returned as `ok: false` instead of thrown. */
@@ -572,6 +572,8 @@ export interface ToolResultEvent {
 	content: Array<TextContent | ImageContent>;
 	details: unknown;
 	isError: boolean;
+	handoff?: AgentToolHandoff;
+	terminate?: boolean;
 }
 
 export interface SessionBeforeCompactEvent {
@@ -687,6 +689,8 @@ export interface ToolResultPatch {
 	content?: Array<TextContent | ImageContent>;
 	details?: unknown;
 	isError?: boolean;
+	/** Set to null to explicitly reject an existing handoff. */
+	handoff?: AgentToolHandoff | null;
 	terminate?: boolean;
 }
 

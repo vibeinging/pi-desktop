@@ -1,4 +1,4 @@
-// 模型管理页。
+// 模型管理页（源：views/models/index.vue）
 // Tab 切换：单槽设计，每个 tab 直接展示该角色的编辑表单（无弹窗）。
 // admin 与项目设置页共用本组件——projectId 非空走项目级自定义模型接口，否则走系统级接口。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -26,12 +26,13 @@ import ModelFormRaw from './components/ModelForm'
 import styles from './index.module.scss'
 import type { ForwardRefExoticComponent, RefAttributes } from 'react'
 
-// 子组件 ModelForm 通过 forwardRef 暴露表单校验句柄。
+// 子组件 ModelForm 暴露的句柄（forwardRef）。源 ModelForm.vue defineExpose({ formRef })，
+// formRef 提供 el-form 的 validate()。ModelForm.tsx 尚为 stub，此处先本地声明契约避免耦合。
 export interface ModelFormHandle {
   formRef: { validate: () => Promise<void> } | null
 }
 
-// ModelForm 子组件 props 契约。
+// ModelForm 子组件 props 契约（对应源 ModelForm.vue defineProps + defineEmits 的回调化）
 export interface ModelFormProps {
   modelForm: Record<string, any>
   formSubmitting?: boolean
@@ -100,7 +101,7 @@ export default function Models({
   const { t } = useTranslation()
 
   // api 适配层：projectId 非空走项目级自定义模型接口，否则走系统级接口。
-  // 同一套表单、状态和提交逻辑供全局设置与项目设置复用。
+  // 同一套表单/状态/提交逻辑两端复用，仅数据源不同——admin 与项目设置页共用本组件。
   const modelApi = useMemo(
     () => ({
       list: (params: any) =>
@@ -138,10 +139,11 @@ export default function Models({
   const [showTestResult, setShowTestResult] = useState(false)
   const [extraHeadersText, setExtraHeadersText] = useState('')
   const [extraBodyText, setExtraBodyText] = useState('')
-  // 子组件暴露的句柄，包含表单校验方法
+  // 子组件暴露的句柄（含 formRef.validate）——对应源的 modelFormRef
   const modelFormRef = useRef<ModelFormHandle>(null)
 
-  // 表单数据（核心字段 + extra_config 配置）；state 负责渲染，ref 供异步流程读取最新值。
+  // 表单数据（核心字段 + extra_config 配置）。
+  // Vue 用 reactive 对象 + Object.assign 原地改；React 用 state 触发渲染 + ref 镜像供 async 流程读最新值。
   const [modelForm, setModelFormState] = useState<ModelFormState>(() =>
     createInitialForm('PRIMARY')
   )
@@ -151,7 +153,7 @@ export default function Models({
     modelFormRefVal.current = next
     setModelFormState(next)
   }, [])
-  // 局部更新表单
+  // 局部 patch 表单（对应 Object.assign(modelForm, patch)）
   const patchForm = useCallback((patch: ModelFormState) => {
     const next = { ...modelFormRefVal.current, ...patch }
     modelFormRefVal.current = next
@@ -535,7 +537,7 @@ export default function Models({
 
   const handleDelete = useCallback(async () => {
     if (!modelFormRefVal.current.id) return
-    // 删除前要求用户确认
+    // ElMessageBox.confirm → modals.openConfirmModal
     modals.openConfirmModal({
       title: t('common.tip'),
       children: t('models.message.deleteConfirm'),

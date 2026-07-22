@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { IconCircle, IconCircleCheckFilled, IconLoader2, IconMaximize, IconMinus } from '@tabler/icons-react'
 import type { PlanStep } from '@/layout/workstation/Workstation'
-import styles from './agent.module.scss'
+import styles from './yiw.module.scss'
 
 type PlanFloatSide = 'left' | 'right'
 type PlanFloatAnchor = { side: PlanFloatSide; offsetX: number; y: number }
 type PlanFloatPosition = PlanFloatAnchor & { x: number }
 
-const PLAN_FLOAT_STORAGE_KEY = 'agent-plan-float-position'
+const PLAN_FLOAT_STORAGE_KEY = 'yiw-plan-float-position'
 const PLAN_FLOAT_EDGE_GAP = 16
 const PLAN_FLOAT_MIN_GAP = 8
 
@@ -138,7 +138,7 @@ export default function PlanStatusFloat({ plan, running }: { plan: PlanStep[]; r
     const offsetY = event.clientY - nodeRect.top
     let latest = anchorFromPosition(node, parent, { x: nodeRect.left - parentRect.left, y: nodeRect.top - parentRect.top })
 
-    document.body.dataset.agentDraggingPlan = 'true'
+    document.body.dataset.yiwDraggingPlan = 'true'
 
     const onMove = (moveEvent: PointerEvent) => {
       const raw = {
@@ -152,7 +152,7 @@ export default function PlanStatusFloat({ plan, running }: { plan: PlanStep[]; r
     const onUp = () => {
       document.removeEventListener('pointermove', onMove)
       document.removeEventListener('pointerup', onUp)
-      document.body.removeAttribute('data-agent-dragging-plan')
+      document.body.removeAttribute('data-yiw-dragging-plan')
       storedAnchorRef.current = { side: latest.side, offsetX: latest.offsetX, y: latest.y }
       saveAnchor(storedAnchorRef.current)
     }

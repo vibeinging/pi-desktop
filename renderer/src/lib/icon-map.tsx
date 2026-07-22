@@ -1,6 +1,6 @@
 /**
- * Element Plus 图标名到 Tabler 图标组件的集中映射。
- * 路由 meta 和组件可继续使用统一的图标名。
+ * Element Plus 图标名 → Tabler 图标组件 的映射(对齐 @element-plus/icons-vue 的用法)。
+ * 原工程在 router meta(elSvgIcon)与各组件里用 EP 图标名；这里集中映射到 @tabler/icons-react。
  * 未命中的名字回退到 IconPoint。
  */
 import {

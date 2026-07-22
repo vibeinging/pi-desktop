@@ -1,8 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../../errors.js";
+import { PRODUCT_TOOL_CATALOG } from "./product_tool_catalog.js";
+import { loadBuiltinSkills } from "../skills/skill_file_loader.js";
+import {
+  SKILL_PRODUCT_STATE_GET_TOOL,
+  SKILL_PRODUCT_STATE_SET_TOOL,
+} from "../modules/skill_product_state.js";
 
 export const PI_TOOL_CATALOG = [
   { name: "update_plan", description: "更新当前任务计划,用于让用户看到多步任务进度。", safety: "meta" },
+  { name: "query_project_data", description: "查询当前问数项目已经接入的数据。", safety: "read" },
   { name: "read", description: "读取工作区内文件内容。", safety: "read" },
   { name: "grep", description: "按内容搜索工作区文件。", safety: "read" },
   { name: "ls", description: "列出工作区目录内容。", safety: "read" },
@@ -10,20 +17,17 @@ export const PI_TOOL_CATALOG = [
   { name: "write", description: "创建或覆盖工作区文件,执行前受权限确认控制。", safety: "write" },
   { name: "edit", description: "编辑工作区文件,执行前受权限确认控制。", safety: "write" },
   { name: "bash", description: "在工作区执行 shell 命令,执行前受权限确认控制。", safety: "execute" },
-  { name: "mcp_*", description: "允许当前项目启用的全部 MCP 工具。", safety: "external" },
+  { name: SKILL_PRODUCT_STATE_GET_TOOL, description: "读取当前已安装 Skill Product 自己的结构化数据;只在产品专属会话中可用。", safety: "read" },
+  { name: SKILL_PRODUCT_STATE_SET_TOOL, description: "写入当前已安装 Skill Product 自己的结构化数据;只在产品专属会话中可用并需要确认。", safety: "write" },
+  ...PRODUCT_TOOL_CATALOG,
 ];
 
-// 底座不预装任何业务 Skill；用户可在设置中创建通用 Skill。
-export const BUILTIN_PI_SKILLS = [];
+export const BUILTIN_PI_SKILLS = loadBuiltinSkills();
 export const APP_SKILL_SCOPE = "__app__";
 export const CHAT_SKILL_SCOPE = "__chat__";
 
 const BUILTIN_BY_NAME = new Map(BUILTIN_PI_SKILLS.map((s) => [s.name, s]));
 const TOOL_NAMES = new Set(PI_TOOL_CATALOG.map((t) => t.name));
-
-function isKnownAllowedTool(name) {
-  return TOOL_NAMES.has(name) || /^mcp_[a-zA-Z0-9_]{1,59}$/.test(name);
-}
 
 function parseJson(value, fallback = {}) {
   if (!value) return fallback;
@@ -57,22 +61,37 @@ function cleanTags(value) {
 
 function cleanAllowedTools(value) {
   return Array.isArray(value)
-    ? value.map((x) => cleanString(x, 64)).filter(isKnownAllowedTool).slice(0, 24)
+    ? value.map((x) => cleanString(x, 64)).filter((x) => TOOL_NAMES.has(x)).slice(0, 24)
     : [];
+}
+
+function cleanProvenance(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const warnings = Array.isArray(value.warnings)
+    ? value.warnings.map((item) => cleanString(item, 500)).filter(Boolean).slice(0, 12)
+    : [];
+  const result = {
+    provider: cleanString(value.provider, 40),
+    repository: cleanString(value.repository, 200),
+    revision: cleanString(value.revision, 160),
+    path: cleanString(value.path, 500),
+    source_url: cleanString(value.source_url, 2_000),
+    page_url: cleanString(value.page_url, 2_000),
+    sha256: cleanString(value.sha256, 128),
+    imported_at: cleanString(value.imported_at, 80),
+    package_mode: cleanString(value.package_mode, 80),
+    adapted_for_product: value.adapted_for_product === true,
+    adapter_version: Number.isInteger(Number(value.adapter_version)) ? Number(value.adapter_version) : null,
+    warnings,
+  };
+  return Object.values(result).some((item) => Array.isArray(item) ? item.length : Boolean(item)) ? result : null;
 }
 
 function assertKnownAllowedTools(value) {
   if (!Array.isArray(value)) return;
   const requested = value.map((x) => cleanString(x, 64)).filter(Boolean);
-  const unknown = [...new Set(requested.filter((x) => !isKnownAllowedTool(x)))];
+  const unknown = [...new Set(requested.filter((x) => !TOOL_NAMES.has(x)))];
   if (unknown.length) throw new ApiError(`未知工具:${unknown.join(", ")}`, 400);
-}
-
-function assertSupportedRuntime(value) {
-  const runtime = cleanString(value, 32) || "prompt";
-  if (runtime !== "prompt") {
-    throw new ApiError(`暂不支持的 Skill 运行类型:${runtime};当前仅支持 prompt`, 400);
-  }
 }
 
 function maybeRuntime(value) {
@@ -89,7 +108,7 @@ export function normalizeSkillName(value) {
 
 function normalizeSkillConfig(data = {}) {
   const description = cleanString(data.description, 1000);
-  const instructions = cleanString(data.instructions, 20000);
+  const instructions = cleanString(data.instructions, 64_000);
   return {
     description,
     category: cleanString(data.category, 80) || null,
@@ -99,6 +118,7 @@ function normalizeSkillConfig(data = {}) {
     runtime: maybeRuntime(data.runtime),
     side_effect: cleanString(data.side_effect, 32) || "read",
     requires_project: boolFrom(data.requires_project, false),
+    provenance: cleanProvenance(data.provenance),
   };
 }
 
@@ -109,10 +129,11 @@ function configFromAppRow(row) {
     category: cfg.category || null,
     tags: cleanTags(cfg.tags),
     allowed_tools: cleanAllowedTools(cfg.allowed_tools),
-    instructions: cleanString(row?.instructions || cfg.instructions || "", 20000),
+    instructions: cleanString(row?.instructions || cfg.instructions || "", 64_000),
     runtime: maybeRuntime(row?.runtime || cfg.runtime),
     side_effect: cleanString(cfg.side_effect, 32) || "read",
     requires_project: boolFrom(cfg.requires_project, false),
+    provenance: cleanProvenance(cfg.provenance),
   };
 }
 
@@ -123,15 +144,16 @@ function configFromProjectRow(row) {
     category: cfg.category || null,
     tags: cleanTags(cfg.tags),
     allowed_tools: cleanAllowedTools(cfg.allowed_tools),
-    instructions: cleanString(cfg.instructions || row?.skill_template || "", 20000),
+    instructions: cleanString(cfg.instructions || row?.skill_template || "", 64_000),
     runtime: maybeRuntime(cfg.runtime),
     side_effect: cleanString(cfg.side_effect, 32) || "read",
     requires_project: boolFrom(cfg.requires_project, false),
+    provenance: cleanProvenance(cfg.provenance),
   };
 }
 
 function builtinRequiresProject(def) {
-  return def.requires_project === true || (def.global === false && def.runtime === "service");
+  return def.requires_project === true || def.name === "smart_query" || (def.global === false && def.runtime === "service");
 }
 
 function appRowToSkill(row) {
@@ -151,12 +173,13 @@ function appRowToSkill(row) {
     action_type: "",
     builtin: false,
     source: "app_db",
+    provenance: cfg.provenance,
     is_active: isActive,
     default_enabled: defaultEnabled,
     effective_enabled: effective,
     availability: effective ? "enabled" : "disabled",
     is_enabled: effective,
-    requires_workspace: cfg.requires_project,
+    requires_datasource: cfg.requires_project,
     config: cfg,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -182,8 +205,9 @@ function builtinToSkill(def, row = null) {
     runtime: maybeRuntime(def.runtime),
     side_effect: def.side_effect || "read",
     handler: def.handler || "",
+    tool_name: def.tool_name || "",
     requires_project: requiresProject,
-    requires_workspace: requiresProject,
+    requires_datasource: requiresProject,
     is_active: isActive,
     default_enabled: defaultEnabled,
     effective_enabled: effective,
@@ -197,7 +221,9 @@ function builtinToSkill(def, row = null) {
       runtime: maybeRuntime(def.runtime),
       side_effect: def.side_effect || "read",
       handler: def.handler || "",
+      tool_name: def.tool_name || "",
       requires_project: requiresProject,
+      provenance: null,
       path: def.path || "",
     },
     created_at: row?.created_at || null,
@@ -225,39 +251,12 @@ async function listAppSkillRows(ctx) {
   ).catch(() => []);
 }
 
-async function insertAppSkillRow(ctx, name, config, { defaultEnabled = true, isActive = true, builtin = false } = {}) {
-  const deleted = await ctx.queryOne(
-    `SELECT id FROM app_skills
-      WHERE skill_name=$1 AND deleted_at IS NOT NULL
-      ORDER BY updated_at DESC
-      LIMIT 1`,
-    [name],
-  ).catch(() => null);
-  if (deleted) {
-    await ctx.query(
-      `UPDATE app_skills
-          SET is_active=$2, default_enabled=$3, builtin=$4, runtime=$5,
-              description=$6, config=$7, instructions=$8, deleted_at=NULL, updated_at=now()
-        WHERE id=$1`,
-      [
-        deleted.id,
-        isActive ? 1 : 0,
-        defaultEnabled ? 1 : 0,
-        builtin ? 1 : 0,
-        config.runtime || "prompt",
-        config.description || "",
-        JSON.stringify(config),
-        builtin ? "" : config.instructions || "",
-      ],
-    );
-    return findAppSkillRow(ctx, name);
-  }
-
+async function insertAppSkillRow(ctx, name, config, { defaultEnabled = true, isActive = true, builtin = false, userId = "" } = {}) {
   const id = randomUUID();
   await ctx.query(
     `INSERT INTO app_skills
-       (id, skill_name, is_active, default_enabled, builtin, runtime, description, config, instructions, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),now())`,
+       (id, skill_name, is_active, default_enabled, builtin, runtime, description, config, instructions, created_by, updated_by, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,now(),now())`,
     [
       id,
       name,
@@ -268,22 +267,23 @@ async function insertAppSkillRow(ctx, name, config, { defaultEnabled = true, isA
       config.description || "",
       JSON.stringify(config),
       builtin ? "" : config.instructions || "",
+      userId || null,
     ],
   );
   return findAppSkillRow(ctx, name);
 }
 
-async function updateAppSkillRow(ctx, name, config) {
+async function updateAppSkillRow(ctx, name, config, userId = "") {
   await ctx.query(
     `UPDATE app_skills
-        SET runtime=$2, description=$3, config=$4, instructions=$5, updated_at=now()
+        SET runtime=$2, description=$3, config=$4, instructions=$5, updated_by=$6, updated_at=now()
       WHERE skill_name=$1 AND deleted_at IS NULL`,
-    [name, config.runtime || "prompt", config.description || "", JSON.stringify(config), config.instructions || ""],
+    [name, config.runtime || "prompt", config.description || "", JSON.stringify(config), config.instructions || "", userId || null],
   );
   return findAppSkillRow(ctx, name);
 }
 
-async function upsertAppSkillState(ctx, name, patch = {}) {
+async function upsertAppSkillState(ctx, name, patch = {}, userId = "") {
   const builtin = BUILTIN_BY_NAME.get(name);
   const row = await findAppSkillRow(ctx, name);
   const existing = row ? (builtin ? builtinToSkill(builtin, row) : appRowToSkill(row)) : null;
@@ -314,13 +314,13 @@ async function upsertAppSkillState(ctx, name, patch = {}) {
       side_effect: def.side_effect || "read",
       requires_project: def.requires_project,
     };
-    await insertAppSkillRow(ctx, name, cfg, { defaultEnabled, isActive, builtin: true });
+    await insertAppSkillRow(ctx, name, cfg, { defaultEnabled, isActive, builtin: true, userId });
   } else {
     await ctx.query(
       `UPDATE app_skills
-          SET is_active=$2, default_enabled=$3, updated_at=now()
+          SET is_active=$2, default_enabled=$3, updated_by=$4, updated_at=now()
         WHERE skill_name=$1 AND deleted_at IS NULL`,
-      [name, isActive ? 1 : 0, defaultEnabled ? 1 : 0],
+      [name, isActive ? 1 : 0, defaultEnabled ? 1 : 0, userId || null],
     );
   }
   return getAppSkill(ctx, name);
@@ -401,7 +401,7 @@ function applyProjectBinding(skill, row, projectId) {
   };
 }
 
-async function upsertProjectBinding(ctx, projectId, skill, enabledOverride) {
+async function upsertProjectBinding(ctx, projectId, skill, enabledOverride, userId = "") {
   if (skill.builtin) {
     if (enabledOverride === false) throw new ApiError("系统内置 Skill 不能关闭", 400);
     if (enabledOverride === null || enabledOverride === undefined) {
@@ -409,9 +409,9 @@ async function upsertProjectBinding(ctx, projectId, skill, enabledOverride) {
       if (existing) {
         await ctx.query(
           `UPDATE project_skills
-              SET deleted_at=now(), updated_at=now()
+              SET deleted_at=now(), deleted_by=$4, updated_at=now()
             WHERE project_id=$1 AND skill_name=$2 AND id=$3`,
-          [projectId, skill.name, existing.id],
+          [projectId, skill.name, existing.id, userId || null],
         ).catch(() => null);
       }
     }
@@ -425,55 +425,38 @@ async function upsertProjectBinding(ctx, projectId, skill, enabledOverride) {
   if (row) {
     await ctx.query(
       `UPDATE project_skills
-          SET skill_id=$3, enabled_override=$4, is_enabled=$5, updated_at=now()
+          SET skill_id=$3, enabled_override=$4, is_enabled=$5, enabled_by=$6, updated_at=now()
         WHERE project_id=$1 AND skill_name=$2 AND deleted_at IS NULL`,
-      [projectId, skill.name, skill.id || null, enabledValue, effective ? 1 : 0],
+      [projectId, skill.name, skill.id || null, enabledValue, effective ? 1 : 0, userId || null],
     ).catch(() =>
       ctx.query(
         `UPDATE project_skills
-            SET is_enabled=$3, updated_at=now()
+            SET is_enabled=$3, enabled_by=$4, updated_at=now()
           WHERE project_id=$1 AND skill_name=$2 AND deleted_at IS NULL`,
-        [projectId, skill.name, effective ? 1 : 0],
+        [projectId, skill.name, effective ? 1 : 0, userId || null],
       ),
     );
   } else {
-    const deleted = await ctx.queryOne(
-      `SELECT id FROM project_skills
-        WHERE project_id=$1 AND skill_name=$2 AND deleted_at IS NOT NULL
-        ORDER BY updated_at DESC
-        LIMIT 1`,
-      [projectId, skill.name],
-    ).catch(() => null);
-    if (deleted) {
-      await ctx.query(
-        `UPDATE project_skills
-            SET skill_id=$3, is_enabled=$4, enabled_override=$5,
-                config=$6, skill_template=$7, deleted_at=NULL, updated_at=now()
-          WHERE project_id=$1 AND id=$2`,
-        [projectId, deleted.id, skill.id || null, effective ? 1 : 0, enabledValue, "{}", ""],
-      );
-    } else {
-      await ctx.query(
+    await ctx.query(
+      `INSERT INTO project_skills
+         (id, project_id, skill_id, skill_name, is_enabled, enabled_override, config, skill_template, enabled_by, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),now())`,
+      [randomUUID(), projectId, skill.id || null, skill.name, effective ? 1 : 0, enabledValue, "{}", "", userId || null],
+    ).catch(() =>
+      ctx.query(
         `INSERT INTO project_skills
-           (id, project_id, skill_id, skill_name, is_enabled, enabled_override, config, skill_template, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now(),now())`,
-        [randomUUID(), projectId, skill.id || null, skill.name, effective ? 1 : 0, enabledValue, "{}", ""],
-      ).catch(() =>
-        ctx.query(
-          `INSERT INTO project_skills
-             (id, project_id, skill_name, is_enabled, config, skill_template, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,now(),now())`,
-          [randomUUID(), projectId, skill.name, effective ? 1 : 0, "{}", ""],
-        ),
-      );
-    }
+           (id, project_id, skill_name, is_enabled, config, skill_template, enabled_by, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,now(),now())`,
+        [randomUUID(), projectId, skill.name, effective ? 1 : 0, "{}", "", userId || null],
+      ),
+    );
   }
   return getPiSkill(ctx, projectId, skill.name);
 }
 
 async function promoteLegacyProjectSkillDefinitions(ctx, projectId) {
   const rows = await ctx.query(
-    `SELECT id, project_id, skill_name, is_enabled, config, skill_template, created_at, updated_at
+    `SELECT id, project_id, skill_name, is_enabled, config, skill_template, enabled_by, created_at, updated_at
        FROM project_skills
       WHERE project_id=$1 AND deleted_at IS NULL
       ORDER BY created_at`,
@@ -490,6 +473,7 @@ async function promoteLegacyProjectSkillDefinitions(ctx, projectId) {
       defaultEnabled: true,
       isActive: true,
       builtin: false,
+      userId: row.enabled_by || "",
     }).catch(() => null);
   }
 }
@@ -528,56 +512,57 @@ export async function getAppSkill(ctx, rawName) {
   return appRowToSkill(row);
 }
 
-export async function createAppSkill(ctx, data = {}) {
+export async function createAppSkill(ctx, data = {}, userId = "") {
   const name = normalizeSkillName(data.name);
-  assertSupportedRuntime(data.runtime);
   if (BUILTIN_BY_NAME.has(name)) throw new ApiError("不能创建与内置 Skill 同名的自定义 Skill", 400);
   const existing = await findAppSkillRow(ctx, name);
   if (existing) throw new ApiError("Skill 已存在", 409);
   assertKnownAllowedTools(data.allowed_tools);
   const config = normalizeSkillConfig(data);
+  if (config.runtime === "service") throw new ApiError("service Skill 只能由 App 内置代码提供", 400);
   if (!config.description) throw new ApiError("Skill 描述不能为空", 400);
   if (!config.instructions) throw new ApiError("Skill 指令不能为空", 400);
   const row = await insertAppSkillRow(ctx, name, config, {
     defaultEnabled: data.default_enabled !== undefined ? !!data.default_enabled : true,
     isActive: data.is_active !== undefined ? !!data.is_active : true,
+    userId,
   });
   return appRowToSkill(row);
 }
 
-export async function updateAppSkill(ctx, rawName, data = {}) {
+export async function updateAppSkill(ctx, rawName, data = {}, userId = "") {
   const name = normalizeSkillName(rawName);
-  if (Object.prototype.hasOwnProperty.call(data, "runtime")) assertSupportedRuntime(data.runtime);
   if (BUILTIN_BY_NAME.has(name)) throw new ApiError("内置 Skill 不支持编辑定义,只能启用或禁用", 400);
   const existing = await findAppSkillRow(ctx, name);
   if (!existing) throw new ApiError("Skill 不存在", 404);
   if (Object.prototype.hasOwnProperty.call(data, "allowed_tools")) assertKnownAllowedTools(data.allowed_tools);
   const prev = configFromAppRow(existing);
   const config = normalizeSkillConfig({ ...prev, ...data });
+  if (config.runtime === "service") throw new ApiError("service Skill 只能由 App 内置代码提供", 400);
   if (!config.description) throw new ApiError("Skill 描述不能为空", 400);
   if (!config.instructions) throw new ApiError("Skill 指令不能为空", 400);
-  const row = await updateAppSkillRow(ctx, name, config);
+  const row = await updateAppSkillRow(ctx, name, config, userId);
   return appRowToSkill(row);
 }
 
-export async function deleteAppSkill(ctx, rawName) {
+export async function deleteAppSkill(ctx, rawName, userId = "") {
   const name = normalizeSkillName(rawName);
   if (BUILTIN_BY_NAME.has(name)) throw new ApiError("内置 Skill 不能删除", 400);
   const existing = await findAppSkillRow(ctx, name);
   if (!existing) throw new ApiError("Skill 不存在", 404);
   await ctx.query(
     `UPDATE app_skills
-        SET deleted_at=now(), updated_at=now()
+        SET deleted_at=now(), deleted_by=$2, updated_by=$2, updated_at=now()
       WHERE skill_name=$1 AND deleted_at IS NULL`,
-    [name],
+    [name, userId || null],
   );
   return { name };
 }
 
-export async function setAppSkillEnabled(ctx, rawName, enabled) {
+export async function setAppSkillEnabled(ctx, rawName, enabled, userId = "") {
   const name = normalizeSkillName(rawName);
   const patch = typeof enabled === "object" && enabled !== null ? enabled : { is_enabled: !!enabled };
-  return upsertAppSkillState(ctx, name, patch);
+  return upsertAppSkillState(ctx, name, patch, userId);
 }
 
 export async function listPiSkills(ctx, projectId) {
@@ -614,7 +599,7 @@ export async function getPiSkill(ctx, projectId, rawName) {
   return skill;
 }
 
-export async function createPiSkill(_ctx, _projectId, _data = {}) {
+export async function createPiSkill(_ctx, _projectId, _data = {}, _userId = "") {
   throw new ApiError("项目内不创建 Skill 定义,请在 App 技能库创建后绑定到项目", 400);
 }
 
@@ -622,26 +607,26 @@ export async function updatePiSkill(_ctx, _projectId, _rawName, _data = {}) {
   throw new ApiError("项目内不更新 Skill 定义,请在 App 技能库更新定义", 400);
 }
 
-export async function deletePiSkill(ctx, projectId, rawName) {
+export async function deletePiSkill(ctx, projectId, rawName, userId = "") {
   const name = normalizeSkillName(rawName);
   if (isBuiltinPiSkill(name)) throw new ApiError("系统内置 Skill 不能删除", 400);
   const existing = await findProjectBindingRow(ctx, projectId, name);
   if (existing) {
     await ctx.query(
       `UPDATE project_skills
-          SET deleted_at=now(), updated_at=now()
+          SET deleted_at=now(), deleted_by=$4, updated_at=now()
         WHERE project_id=$1 AND skill_name=$2 AND id=$3`,
-      [projectId, name, existing.id],
+      [projectId, name, existing.id, userId || null],
     );
   }
   return getPiSkill(ctx, projectId, name);
 }
 
-export async function setPiSkillEnabled(ctx, projectId, rawName, enabled) {
+export async function setPiSkillEnabled(ctx, projectId, rawName, enabled, userId = "") {
   const name = normalizeSkillName(rawName);
   const appSkill = await getAppSkill(ctx, name);
   const enabledOverride = enabled === null || enabled === undefined ? null : !!enabled;
-  return upsertProjectBinding(ctx, projectId, appSkill, enabledOverride);
+  return upsertProjectBinding(ctx, projectId, appSkill, enabledOverride, userId);
 }
 
 export async function isPiSkillEnabled(ctx, projectId, rawName) {

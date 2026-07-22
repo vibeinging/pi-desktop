@@ -14,10 +14,12 @@ import {
 import type {
 	AgentContext,
 	AgentEvent,
+	AgentHandoffAssistantMessage,
 	AgentLoopConfig,
 	AgentMessage,
 	AgentTool,
 	AgentToolCall,
+	AgentToolHandoff,
 	AgentToolResult,
 	StreamFn,
 } from "./types.ts";
@@ -203,6 +205,7 @@ async function runLoop(
 			const toolCalls = message.content.filter((c) => c.type === "toolCall");
 
 			const toolResults: ToolResultMessage[] = [];
+			let toolHandoff: ResolvedToolHandoff | undefined;
 			hasMoreToolCalls = false;
 			if (toolCalls.length > 0) {
 				// A "length" stop means the output was cut off by the token limit, so
@@ -213,7 +216,8 @@ async function runLoop(
 						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
 						: await executeToolCalls(currentContext, message, config, signal, emit);
 				toolResults.push(...executedToolBatch.messages);
-				hasMoreToolCalls = !executedToolBatch.terminate;
+				toolHandoff = signal?.aborted ? undefined : executedToolBatch.handoff;
+				hasMoreToolCalls = !signal?.aborted && !executedToolBatch.terminate;
 
 				for (const result of toolResults) {
 					currentContext.messages.push(result);
@@ -221,10 +225,25 @@ async function runLoop(
 				}
 			}
 
-			await emit({ type: "turn_end", message, toolResults });
+			let completedTurnMessage: AssistantMessage = message;
+			if (toolHandoff) {
+				const handoffMessage = createToolHandoffAssistantMessage(message, toolHandoff);
+				currentContext.messages.push(handoffMessage);
+				newMessages.push(handoffMessage);
+				await emit({ type: "message_start", message: handoffMessage });
+				await emit({ type: "message_end", message: handoffMessage });
+				await emit({
+					type: "tool_handoff",
+					message: handoffMessage,
+					toolCallIds: toolHandoff.toolCallIds,
+				});
+				completedTurnMessage = handoffMessage;
+			}
+
+			await emit({ type: "turn_end", message: completedTurnMessage, toolResults });
 
 			const nextTurnContext = {
-				message,
+				message: completedTurnMessage,
 				toolResults,
 				context: currentContext,
 				newMessages,
@@ -246,7 +265,7 @@ async function runLoop(
 
 			if (
 				await config.shouldStopAfterTurn?.({
-					message,
+					message: completedTurnMessage,
 					toolResults,
 					context: currentContext,
 					newMessages,
@@ -430,6 +449,12 @@ async function executeToolCalls(
 type ExecutedToolCallBatch = {
 	messages: ToolResultMessage[];
 	terminate: boolean;
+	handoff?: ResolvedToolHandoff;
+};
+
+type ResolvedToolHandoff = AgentToolHandoff & {
+	toolCallIds: string[];
+	entries: Array<{ toolCallId: string; handoff: AgentToolHandoff }>;
 };
 
 async function executeToolCallsSequential(
@@ -441,7 +466,6 @@ async function executeToolCallsSequential(
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallOutcome[] = [];
-	const messages: ToolResultMessage[] = [];
 
 	for (const toolCall of toolCalls) {
 		await emit({
@@ -472,19 +496,19 @@ async function executeToolCallsSequential(
 		}
 
 		await emitToolExecutionEnd(finalized, emit);
-		const toolResultMessage = createToolResultMessage(finalized);
-		await emitToolResultMessage(toolResultMessage, emit);
 		finalizedCalls.push(finalized);
-		messages.push(toolResultMessage);
 
 		if (signal?.aborted) {
 			break;
 		}
 	}
 
+	const handoff = resolveToolBatchHandoff(finalizedCalls, toolCalls.length, signal);
+	const messages = await createAndEmitToolResultMessages(finalizedCalls, handoff, emit);
 	return {
 		messages,
-		terminate: shouldTerminateToolBatch(finalizedCalls),
+		terminate: Boolean(signal?.aborted) || Boolean(handoff) || shouldTerminateToolBatch(finalizedCalls),
+		handoff,
 	};
 }
 
@@ -542,16 +566,12 @@ async function executeToolCallsParallel(
 	const orderedFinalizedCalls = await Promise.all(
 		finalizedCalls.map((entry) => (typeof entry === "function" ? entry() : Promise.resolve(entry))),
 	);
-	const messages: ToolResultMessage[] = [];
-	for (const finalized of orderedFinalizedCalls) {
-		const toolResultMessage = createToolResultMessage(finalized);
-		await emitToolResultMessage(toolResultMessage, emit);
-		messages.push(toolResultMessage);
-	}
-
+	const handoff = resolveToolBatchHandoff(orderedFinalizedCalls, toolCalls.length, signal);
+	const messages = await createAndEmitToolResultMessages(orderedFinalizedCalls, handoff, emit);
 	return {
 		messages,
-		terminate: shouldTerminateToolBatch(orderedFinalizedCalls),
+		terminate: Boolean(signal?.aborted) || Boolean(handoff) || shouldTerminateToolBatch(orderedFinalizedCalls),
+		handoff,
 	};
 }
 
@@ -583,6 +603,139 @@ type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() => Promise<Finalize
 
 function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): boolean {
 	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);
+}
+
+function isToolResultContent(value: unknown): value is AgentToolResult<unknown>["content"] {
+	return (
+		Array.isArray(value) &&
+		value.every((part) => {
+			if (!part || typeof part !== "object") return false;
+			const record = part as Record<string, unknown>;
+			if (record.type === "text") return typeof record.text === "string";
+			if (record.type === "image") return typeof record.data === "string" && typeof record.mimeType === "string";
+			return false;
+		})
+	);
+}
+
+function validateToolHandoff(value: unknown, toolName: string): AgentToolHandoff | undefined {
+	try {
+		if (!value || typeof value !== "object") return undefined;
+		const record = value as Record<string, unknown>;
+		if (record.kind !== "final" || typeof record.content !== "string") return undefined;
+		const content = record.content.trim();
+		if (!content) return undefined;
+
+		let source: AgentToolHandoff["source"] = { type: "tool", name: toolName };
+		if (Object.hasOwn(record, "source")) {
+			if (!record.source || typeof record.source !== "object") return undefined;
+			const sourceRecord = record.source as Record<string, unknown>;
+			if (!(["service", "subagent", "tool"] as unknown[]).includes(sourceRecord.type)) return undefined;
+			for (const key of ["name", "provider", "model"] as const) {
+				if (sourceRecord[key] !== undefined && typeof sourceRecord[key] !== "string") return undefined;
+			}
+			source = {
+				type: sourceRecord.type as "service" | "subagent" | "tool",
+				name: String(sourceRecord.name || toolName).trim() || toolName,
+				...(typeof sourceRecord.provider === "string" && sourceRecord.provider.trim()
+					? { provider: sourceRecord.provider.trim() }
+					: {}),
+				...(typeof sourceRecord.model === "string" && sourceRecord.model.trim()
+					? { model: sourceRecord.model.trim() }
+					: {}),
+			};
+		}
+
+		let toolResult: AgentToolHandoff["toolResult"];
+		if (Object.hasOwn(record, "toolResult")) {
+			if (!record.toolResult || typeof record.toolResult !== "object") return undefined;
+			const receiptRecord = record.toolResult as Record<string, unknown>;
+			if (!isToolResultContent(receiptRecord.content)) return undefined;
+			toolResult = {
+				content: receiptRecord.content,
+				...(Object.hasOwn(receiptRecord, "details") ? { details: receiptRecord.details } : {}),
+			};
+		}
+
+		return { kind: "final", content, source, ...(toolResult ? { toolResult } : {}) };
+	} catch {
+		return undefined;
+	}
+}
+
+async function createAndEmitToolResultMessages(
+	finalizedCalls: FinalizedToolCallOutcome[],
+	handoff: ResolvedToolHandoff | undefined,
+	emit: AgentEventSink,
+): Promise<ToolResultMessage[]> {
+	const receipts = new Map(
+		(handoff?.entries ?? [])
+			.filter((entry) => entry.handoff.toolResult)
+			.map((entry) => [entry.toolCallId, entry.handoff.toolResult] as const),
+	);
+	const messages: ToolResultMessage[] = [];
+	for (const finalized of finalizedCalls) {
+		const toolResultMessage = createToolResultMessage(finalized, receipts.get(finalized.toolCall.id));
+		await emitToolResultMessage(toolResultMessage, emit);
+		messages.push(toolResultMessage);
+	}
+	return messages;
+}
+
+function resolveToolBatchHandoff(
+	finalizedCalls: FinalizedToolCallOutcome[],
+	expectedCallCount: number,
+	signal?: AbortSignal,
+): ResolvedToolHandoff | undefined {
+	if (signal?.aborted || finalizedCalls.length === 0 || finalizedCalls.length !== expectedCallCount) return undefined;
+	if (finalizedCalls.some((finalized) => finalized.isError)) return undefined;
+
+	const entries: ResolvedToolHandoff["entries"] = [];
+	for (const finalized of finalizedCalls) {
+		const handoff = validateToolHandoff(finalized.result.handoff, finalized.toolCall.name);
+		if (!handoff) return undefined;
+		entries.push({ toolCallId: finalized.toolCall.id, handoff });
+	}
+
+	return {
+		kind: "final",
+		content: entries.map((entry) => entry.handoff.content).join("\n\n"),
+		toolCallIds: entries.map((entry) => entry.toolCallId),
+		entries,
+	};
+}
+
+function createToolHandoffAssistantMessage(
+	sourceMessage: AssistantMessage,
+	handoff: ResolvedToolHandoff,
+): AgentHandoffAssistantMessage {
+	const sources = handoff.entries.map((entry) => entry.handoff.source ?? { type: "tool" as const });
+	const sourceProviders = [
+		...new Set(sources.map((source) => source.provider).filter((provider): provider is string => Boolean(provider))),
+	];
+	const sourceModels = [...new Set(sources.map((source) => source.model).filter((model): model is string => Boolean(model)))];
+	return {
+		role: "assistant",
+		content: [{ type: "text", text: handoff.content }],
+		api: sourceMessage.api,
+		provider: sourceProviders.length === 1 ? sourceProviders[0] : sourceMessage.provider,
+		model: sourceModels.length === 1 ? sourceModels[0] : sourceMessage.model,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: Date.now(),
+		handoffMetadata: {
+			kind: "final",
+			toolCallIds: [...handoff.toolCallIds],
+			sources,
+		},
+	};
 }
 
 function prepareToolCallArguments(tool: AgentTool<any>, toolCall: AgentToolCall): AgentToolCall {
@@ -734,11 +887,15 @@ async function finalizeExecutedToolCall(
 			);
 			if (afterResult) {
 				result = {
-					content: afterResult.content ?? result.content,
-					details: afterResult.details ?? result.details,
-					terminate: afterResult.terminate ?? result.terminate,
+					content: Object.hasOwn(afterResult, "content") ? (afterResult.content ?? []) : result.content,
+					details: Object.hasOwn(afterResult, "details") ? afterResult.details : result.details,
+					handoff:
+						afterResult.handoff === null
+							? undefined
+							: (afterResult.handoff ?? result.handoff),
+					terminate: Object.hasOwn(afterResult, "terminate") ? afterResult.terminate : result.terminate,
 				};
-				isError = afterResult.isError ?? isError;
+				if (Object.hasOwn(afterResult, "isError")) isError = afterResult.isError ?? false;
 			}
 		} catch (error) {
 			result = createErrorToolResult(error instanceof Error ? error.message : String(error));
@@ -770,15 +927,21 @@ async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: A
 	});
 }
 
-function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResultMessage {
+function createToolResultMessage(
+	finalized: FinalizedToolCallOutcome,
+	handoffReceipt?: AgentToolHandoff["toolResult"],
+): ToolResultMessage {
 	return {
 		role: "toolResult",
 		toolCallId: finalized.toolCall.id,
 		toolName: finalized.toolCall.name,
 		// Untyped tools (JS extensions) can return results without content; normalize
 		// so the null never enters session history or provider payloads.
-		content: finalized.result.content ?? [],
-		details: finalized.result.details,
+		content: handoffReceipt?.content ?? finalized.result.content ?? [],
+		details:
+			handoffReceipt && Object.hasOwn(handoffReceipt, "details")
+				? handoffReceipt.details
+				: finalized.result.details,
 		isError: finalized.isError,
 		timestamp: Date.now(),
 	};

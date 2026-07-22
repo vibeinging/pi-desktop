@@ -1,3 +1,4 @@
+// 源：views/models/index.vue <style scoped> + 全局 <style>（el-switch 调整）
 // CSS Modules：本组件自有类名走局部作用域；element-plus 内部类名（.el-tabs__* / .el-switch*）
 // 是第三方/全局渲染结构，需用 :global(...) 包裹，避免被 hash 改名后选不中。
 
@@ -73,7 +74,7 @@
   flex-direction: column;
 
   // 源 :deep(.model-tabs)：ScrollableTabs 透传 tabsClass="model-tabs"。
-  // 当前底层使用 Mantine Tabs，这组样式只负责统一标签页视觉；
+  // 迁移后底层是 Mantine Tabs（非 el-tabs），但保留这组样式契约以对齐视觉；
   // element-plus 内部选择器用 :global 包裹防止被改名。
   :global(.model-tabs) {
     flex-shrink: 0;
@@ -115,9 +116,9 @@
           color: #475569;
         }
 
-        // 选中态：单色 indigo 下划线（无渐变无阴影）
+        // 选中态：单色 yiw 下划线（无渐变无阴影）
         &:global(.is-active) {
-          color: #6366f1;
+          color: #17483e;
 
           &::after {
             content: '';
@@ -126,7 +127,7 @@
             right: 18px;
             bottom: -1px;
             height: 2px;
-            background: #6366f1;
+            background: #17483e;
           }
         }
       }

@@ -1,0 +1,26 @@
+import * as modules from "../app/modules/index.js";
+
+export const uiModuleRoutes = [
+  { m: "GET", p: "/api/ui-modules", fn: modules.list, auth: true },
+  { m: "POST", p: "/api/ui-skill-products/drafts", fn: modules.createProductFromSkill, auth: true },
+  { m: "POST", p: "/api/ui-module-drafts", fn: modules.createModuleDraft, auth: true },
+  { m: "GET", p: "/api/ui-module-drafts/:draftId", fn: modules.moduleDraft, auth: true },
+  { m: "PUT", p: "/api/ui-module-drafts/:draftId", fn: modules.updateModuleDraft, auth: true },
+  { m: "POST", p: "/api/ui-module-drafts/:draftId/validate", fn: modules.checkModuleDraft, auth: true },
+  { m: "POST", p: "/api/ui-module-drafts/:draftId/preview", fn: modules.openModulePreview, auth: true },
+  { m: "POST", p: "/api/ui-module-drafts/:draftId/install", fn: modules.installModuleDraft, auth: true },
+  { m: "POST", p: "/api/ui-modules/:moduleId/agent-exports", fn: modules.createAgentExport, auth: true },
+  { m: "POST", p: "/api/ui-module-agent-exports/:exportId/validate", fn: modules.validateAgentExport, auth: true },
+  { m: "POST", p: "/api/ui-module-agent-exports/:exportId/publish", fn: modules.publishAgentExport, auth: true },
+  { m: "POST", p: "/api/ui-module-agent-exports/:exportId/suspend", fn: modules.suspendAgentExport, auth: true },
+  { m: "GET", p: "/api/miniapp-agent-skills", fn: modules.listAgentSkills, auth: true },
+  { m: "POST", p: "/api/miniapp-agent-skills/:exportId/commands/:commandName", fn: modules.invokeAgentSkill, auth: true },
+  { m: "GET", p: "/api/ui-modules/:moduleId/versions", fn: modules.versions, auth: true },
+  { m: "GET", p: "/api/ui-modules/:moduleId/state", fn: modules.moduleState, auth: true },
+  { m: "POST", p: "/api/ui-modules/:moduleId/versions/:versionId/activate", fn: modules.switchModuleVersion, auth: true },
+  { m: "PATCH", p: "/api/ui-modules/:moduleId/status", fn: modules.toggleModule, auth: true },
+  { m: "PUT", p: "/api/ui-modules/:moduleId/providers/:providerAlias", fn: modules.bindModuleProvider, auth: true },
+  { m: "POST", p: "/api/ui-modules/:moduleId/actions/:actionName", fn: modules.executeModuleAction, auth: true },
+  { m: "GET", p: "/api/ui-modules/:moduleId", fn: modules.detail, auth: true },
+  { m: "DELETE", p: "/api/ui-modules/:moduleId", fn: modules.removeModule, auth: true },
+];
