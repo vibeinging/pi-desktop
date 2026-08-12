@@ -19,7 +19,7 @@
   "dependencies": {
     "@clickhouse/client": "^1.22.0",
     "@duckdb/node-api": "^1.5.4-r.1",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@yitrace/db": "0.1.6",
     "better-sqlite3": "^12.11.1",
     "cors": "^2.8.5",
